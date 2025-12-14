@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Permission {
+  READ
+  COMMENT
+  EDIT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String?
+  createdAt DateTime @default(now())
+
+  // Ownership relations
+  folders   Folder[]
+  files     FileObject[]
+
+  // Sharing relations (two different relations to Share)
+  sharesOwned    Share[] @relation("ShareOwner")
+  sharesReceived Share[] @relation("ShareRecipient")
+}
+
+model Folder {
+  id        String   @id @default(cuid())
+  name      String
+
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
+
+  parentId  String?
+  parent    Folder?  @relation("FolderTree", fields: [parentId], references: [id])
+  children  Folder[] @relation("FolderTree")
+
+  files     FileObject[]
+  shares    Share[]       // ✅ opposite side of Share.folder
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, parentId])
+}
+
+model FileObject {
+  id        String   @id @default(cuid())
+  name      String
+  size      Int
+  mimeType  String
+  s3Key     String   @unique
+
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
+
+  folderId  String?
+  folder    Folder? @relation(fields: [folderId], references: [id])
+
+  shares    Share[]       // ✅ opposite side of Share.file
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, folderId])
+}
+
+model Share {
+  id        String   @id @default(cuid())
+
+  // Who created the share (owner)
+  ownerId   String
+  owner     User     @relation("ShareOwner", fields: [ownerId], references: [id])
+
+  // Share target can be either a file or a folder (or link token)
+  fileId    String?
+  file      FileObject? @relation(fields: [fileId], references: [id])
+
+  folderId  String?
+  folder    Folder?     @relation(fields: [folderId], references: [id])
+
+  // Share recipient (optional for link shares)
+  sharedWithUserId String?
+  sharedWithUser   User?  @relation("ShareRecipient", fields: [sharedWithUserId], references: [id])
+
+  linkToken  String?  @unique
+  permission Permission
+  createdAt  DateTime @default(now())
+
+  @@index([fileId])
+  @@index([folderId])
+  @@index([sharedWithUserId])
+}
