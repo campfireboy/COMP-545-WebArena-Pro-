@@ -1,4 +1,6 @@
 // src/app/api/folders/route.ts
+//this is the version with the nested folders
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
