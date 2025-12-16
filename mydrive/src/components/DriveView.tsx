@@ -45,7 +45,6 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   const [movePicker, setMovePicker] = useState<null | { kind: "folder" | "file"; id: string }>(null);
 
-
   async function load() {
     setLoading(true);
     const url = folderId ? `/api/folders?parentId=${encodeURIComponent(folderId)}` : `/api/folders`;
