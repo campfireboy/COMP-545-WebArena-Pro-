@@ -1,0 +1,14 @@
+# Railway 配置文件
+# 注意：如果已在 Railway 中设置 Root Directory = backend，
+# 则不需要 cd backend 命令
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+

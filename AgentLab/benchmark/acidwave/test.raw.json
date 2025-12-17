@@ -1,0 +1,445 @@
+[
+  {
+    "task_id": 0,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Play the song \"Vibrant Horizon\" by Denys Brodovskyi.",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "div.fixed.bottom-0:has-text(\"Vibrant Horizon\"):has-text(\"Denys Brodovskyi\")",
+          "required_contents": "VIBRANT HORIZON"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 1,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Play the song \"Watch and Learn\" by Mise Darling",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "div.fixed.bottom-0:has-text(\"Watch and Learn\"):has-text(\"Mise Darling\")",
+          "required_contents": "WATCH AND LEARN"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 2,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Open the album \"Luminary Echoes\" by Denys Brodovskyi",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "h1:has-text(\"Luminary Echoes\"), h2:has-text(\"Luminary Echoes\"), [class*='album']:has-text(\"Luminary Echoes\")",
+          "required_contents": "LUMINARY ECHOES"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 3,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Open the album \"Plastic Love\" by Mise Darling",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match",
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "Plastic Love",
+          "Mise Darling"
+        ],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "h1:has-text(\"Plastic Love\"), h2:has-text(\"Plastic Love\"), [aria-label*='album' i]:has-text(\"Plastic Love\"), [data-test*='album-title']:has-text(\"Plastic Love\")",
+          "required_contents": "PlASTIC LOVE"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 4,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Open the artist page for Denys Brodovskyi",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "Denys Brodovskyi",
+          "ARTIST_PROFILE"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 5,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Open the artist page for Mise Darling",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "Mise Darling",
+          "ARTIST_PROFILE"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 6,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Navigate to the FAVORITES.DAT playlist",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "FAVORITE_DATA"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 7,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Filter and display all songs in the POP category",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "button:has-text(\"POP\")[class*='ring-2'], button:has-text(\"POP\")[class*='shadow']",
+          "required_contents": "POP"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 8,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Add the song 'Vibrant Horizon' to favorites and verify it appears in the favorites list",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "FAVORITE_DATA",
+          "VIBRANT HORIZON"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 9,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Create a new playlist named 'PLAYLIST2'",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "PLAYLIST2"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 10,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Login with username 'aciduser' and password 'aciduser'",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "aciduser",
+          "AUTHENTICATED"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 11,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Remove all songs from the FAVORITES.DAT playlist",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "FAVORITE_DATA",
+          "NO_FAVORITES_DETECTED"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 12,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Navigate to PLAYLIST1 and remove all songs from it",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "PLAYLIST1",
+          "EMPTY_PLAYLIST"
+        ],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 13,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Play the first song in the SONGS list, then pause it and click the player bar information button to show the song details",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match",
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "Song Information",
+          "Watch and Learn",
+          "Mise Darling"
+        ],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "div.fixed.bottom-0:has-text('Watch and Learn'):has-text('Mise Darling'), div:has(button:has(svg[class*='Play'])):has-text('Watch and Learn')",
+          "required_contents": "WATCH AND LEARN"
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 14,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Navigate to Denys Brodovskyi's artist page and visit his website",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "url_match"
+      ],
+      "reference_answers": {
+        "exact_match": "https://freemusicarchive.org/music/denys-brodovskyi/",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 15,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Navigate to the KONFLIKT album and download the first song KONFLIKT",
+    "difficulty": "hard",
+    "eval": {
+      "eval_types": [
+        "url_match"
+      ],
+      "reference_answers": {
+        "exact_match": "https://mbdhzhgtcfxmmpcyahkr.supabase.co/storage/v1/object/public/music-files/artists/Jazz%20at%20Mladost%20Club/Jazz%20at%20Mladost%20Club%20-%20Konflikt.mp3",
+        "must_include": [],
+        "must_exclude": []
+      },
+      "program_html": []
+    }
+  },
+  {
+    "task_id": 16,
+    "require_login": false,
+    "require_reset": true,
+    "start_url": "https://comp545-webarena-production-9062.up.railway.app",
+    "sites": [
+      "acidwave"
+    ],
+    "intent": "Navigate to the album 'Luminary Echoes' by Denys Brodovskyi, then create a new playlist named 'PRESENTATION_MIX' and add all songs from this album to it.",
+    "difficulty": "hard",
+    "eval": {
+      "eval_types": [
+        "string_match",
+        "program_html"
+      ],
+      "reference_answers": {
+        "exact_match": "",
+        "must_include": [
+          "PRESENTATION_MIX"
+        ],
+        "must_exclude": []
+      },
+      "program_html": [
+        {
+          "locator": "[data-track-title*='Vibrant Horizon' i]",
+          "required_contents": "VIBRANT HORIZON"
+        }
+      ]
+    }
+  }
+]

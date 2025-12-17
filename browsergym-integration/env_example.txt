@@ -1,0 +1,55 @@
+# BrowserGym + AgentLab 环境配置
+# 复制此文件为 .env 并填入你的配置
+
+# ============== LLM API 密钥 ==============
+# OpenAI (推荐)
+OPENAI_API_KEY=sk-your-openai-api-key-here
+
+# Anthropic (可选)
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-api-key-here
+
+# Azure OpenAI (可选)
+AZURE_OPENAI_API_KEY=your-azure-openai-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+
+# ============== Acidwave 配置 ==============
+# 前端 URL (默认: http://localhost:80)
+ACIDWAVE_FRONTEND_URL=http://localhost:80
+
+# 后端 API URL (默认: http://localhost:3000)
+ACIDWAVE_BACKEND_URL=http://localhost:3000
+
+# ============== Agent 配置 ==============
+# LLM 提供商 (openai, anthropic, azure)
+LLM_PROVIDER=openai
+
+# 使用的模型
+LLM_MODEL=gpt-4o
+
+# 最大步骤数
+MAX_STEPS=50
+
+# ============== 浏览器配置 ==============
+# 无头模式 (true/false)
+HEADLESS=false
+
+# 视口大小
+VIEWPORT_WIDTH=1280
+VIEWPORT_HEIGHT=720
+
+# 操作延迟 (毫秒)
+SLOW_MO=100
+
+# ============== 输出配置 ==============
+# 结果输出目录
+OUTPUT_DIR=/Users/alexmiller/COMP-545-WebArena-Pro-/agent_lab_results
+
+# 是否保存截图
+SAVE_SCREENSHOTS=true
+
+# 是否保存追踪
+SAVE_TRACES=true
+
+# 详细日志
+VERBOSE=true
+

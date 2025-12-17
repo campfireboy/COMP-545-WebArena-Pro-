@@ -21,13 +21,24 @@ async function getParamId(ctx: Ctx): Promise<string> {
   return p.id;
 }
 
-export async function PATCH(req: Request, ctx: Ctx) {
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
+  let email = session?.user?.email;
+
+  // DEV BYPASS
+  if (!email && process.env.NODE_ENV === "development") {
+    email = "agent@test.com";
+  }
+
+  if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const fileId = await getParamId(ctx);
+  const { id } = await params;
+  const fileId = id;
   if (!fileId) return NextResponse.json({ error: "Missing file id" }, { status: 400 });
 
   const json = await req.json().catch(() => null);
@@ -40,7 +51,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
+    where: { email },
     select: { id: true },
   });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 401 });
@@ -80,17 +91,28 @@ export async function PATCH(req: Request, ctx: Ctx) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(_req: Request, ctx: Ctx) {
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
+  let email = session?.user?.email;
+
+  // DEV BYPASS
+  if (!email && process.env.NODE_ENV === "development") {
+    email = "agent@test.com";
+  }
+
+  if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const fileId = await getParamId(ctx);
+  const { id } = await params;
+  const fileId = id;
   if (!fileId) return NextResponse.json({ error: "Missing file id" }, { status: 400 });
 
   const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
+    where: { email },
     select: { id: true },
   });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 401 });

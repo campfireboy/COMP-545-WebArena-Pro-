@@ -8,11 +8,18 @@ import { s3 } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Await the params
+  const { id } = await params;
+  const folderId = id;
 
   const user = await prisma.user.findUnique({
     where: { email: session.user.email },
@@ -20,7 +27,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const file = await prisma.fileObject.findUnique({
-    where: { id: params.id },
+    where: { id: folderId },
   });
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

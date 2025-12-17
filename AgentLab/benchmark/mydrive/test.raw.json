@@ -1,0 +1,48 @@
+[
+  {
+    "task_id": 0,
+    "intent": "Open the folder named coursework",
+    "difficulty": "easy",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "POLI 340"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 1,
+    "intent": "Find the file named POLI340_essay_outline.docx inside a folder",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "program_html"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "POLI340_essay_outline.docx"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 2,
+    "start_url": "http://localhost:3000/login",
+    "intent": "Sign in with these credentials email agent@test.com password: password123",
+    "difficulty": "medium",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "My Drive"
+        ]
+      }
+    }
+  }
+]
