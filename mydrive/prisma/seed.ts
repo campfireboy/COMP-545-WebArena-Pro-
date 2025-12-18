@@ -30,6 +30,7 @@ export async function seedTestData() {
     data: {
       email: "agent@test.com",
       name: "Agent User",
+      username: "agent123",
       password: hashPassword("password123"),
     },
   });

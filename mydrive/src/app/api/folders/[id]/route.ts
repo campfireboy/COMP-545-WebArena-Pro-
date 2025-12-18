@@ -35,23 +35,21 @@ async function wouldCreateCycle(folderId: string, newParentId: string) {
   return false;
 }
 
-async function collectDescendantFolderIds(rootId: string, ownerId: string) {
+async function collectDescendantFolderIds(rootId: string) {
   const all: string[] = [];
   let frontier: string[] = [rootId].filter((v): v is string => typeof v === "string" && v.length > 0);
-
 
   while (frontier.length) {
     all.push(...frontier);
 
     const children = await prisma.folder.findMany({
-      where: { ownerId, parentId: { in: frontier } },
+      where: { parentId: { in: frontier } },
       select: { id: true },
     });
 
     frontier = children
       .map((c) => c.id)
       .filter((v): v is string => typeof v === "string" && v.length > 0);
-
   }
 
   return all;
@@ -70,7 +68,6 @@ export async function PATCH(
     return NextResponse.json({ error: "Missing folder id" }, { status: 400 });
   }
 
-
   const body = await req.json().catch(() => ({}));
   const parentIdRaw = body?.parentId;
   const nameRaw = body?.name;
@@ -81,17 +78,54 @@ export async function PATCH(
   if (typeof nameRaw === "string" && nameRaw.trim().length > 0) {
     dataToUpdate.name = nameRaw.trim();
   } else if (parentIdRaw !== undefined) {
+    // Check source folder permission
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      select: { id: true, ownerId: true, parentId: true },
+    });
+    if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    let canEdit = false;
+    if (folder.ownerId === userId) {
+      canEdit = true;
+    } else if (folder.parentId) {
+      const parent = await prisma.folder.findUnique({
+        where: { id: folder.parentId },
+        include: { shares: true }
+      });
+      if (parent) {
+        if (parent.ownerId === userId) canEdit = true;
+        else {
+          const share = parent.shares.find(s => s.sharedWithUserId === userId && s.permission === "EDIT");
+          if (share) canEdit = true;
+        }
+      }
+    }
+
+    if (!canEdit) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+
     const newParentId: string | null =
       typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0 ? parentIdRaw : null;
 
     dataToUpdate.parentId = newParentId;
 
     if (newParentId) {
-      const dest = await prisma.folder.findFirst({
-        where: { id: newParentId, ownerId: userId },
-        select: { id: true },
+      // Check destination permission (Ownership OR Edit access)
+      const dest = await prisma.folder.findUnique({
+        where: { id: newParentId },
+        include: { shares: true }
       });
-      if (!dest) return NextResponse.json({ error: "Invalid destination" }, { status: 400 });
+
+      let canMoveTo = false;
+      if (dest) {
+        if (dest.ownerId === userId) canMoveTo = true;
+        else {
+          const share = dest.shares.find(s => s.sharedWithUserId === userId && s.permission === "EDIT");
+          if (share) canMoveTo = true;
+        }
+      }
+
+      if (!canMoveTo) return NextResponse.json({ error: "Invalid destination or access denied" }, { status: 400 });
 
       if (await wouldCreateCycle(id, newParentId)) {
         return NextResponse.json(
@@ -106,12 +140,6 @@ export async function PATCH(
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  const folder = await prisma.folder.findFirst({
-    where: { id, ownerId: userId },
-    select: { id: true },
-  });
-  if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   const updated = await prisma.folder.update({
     where: { id },
     data: dataToUpdate,
@@ -125,7 +153,6 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-
   const userId = await getUserIdFromReq(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -135,19 +162,38 @@ export async function DELETE(
     return NextResponse.json({ error: "Missing folder id" }, { status: 400 });
   }
 
-  const folder = await prisma.folder.findFirst({
-    where: { id, ownerId: userId },
-    select: { id: true },
+  const folder = await prisma.folder.findUnique({
+    where: { id },
+    select: { id: true, ownerId: true, parentId: true },
   });
   if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const ids = await collectDescendantFolderIds(id, userId);
+  let canDelete = false;
+  if (folder.ownerId === userId) {
+    canDelete = true;
+  } else if (folder.parentId) {
+    const parent = await prisma.folder.findUnique({
+      where: { id: folder.parentId },
+      include: { shares: true }
+    });
+    if (parent) {
+      if (parent.ownerId === userId) canDelete = true;
+      else {
+        const share = parent.shares.find(s => s.sharedWithUserId === userId && s.permission === "EDIT");
+        if (share) canDelete = true;
+      }
+    }
+  }
+
+  if (!canDelete) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+
+  const ids = await collectDescendantFolderIds(id);
   const idsBottomUp = [...ids].reverse();
 
   await prisma.$transaction(async (tx) => {
     // delete files in subtree first
     await tx.fileObject.deleteMany({
-      where: { ownerId: userId, folderId: { in: ids } },
+      where: { folderId: { in: ids } },
     });
 
     // delete folders bottom-up

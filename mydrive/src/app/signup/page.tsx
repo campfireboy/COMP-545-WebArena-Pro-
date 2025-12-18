@@ -7,6 +7,7 @@ export default function SignupPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +21,7 @@ export default function SignupPage() {
     const res = await fetch("/api/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name: name.trim() ? name.trim() : undefined }),
+      body: JSON.stringify({ email, username, password, name: name.trim() ? name.trim() : undefined }),
     });
 
     setSubmitting(false);
@@ -50,6 +51,17 @@ export default function SignupPage() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Alex"
             autoComplete="name"
+            style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
+          />
+        </label>
+
+        <label style={{ display: "block", marginBottom: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Username</div>
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="username"
+            autoComplete="username"
             style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
           />
         </label>

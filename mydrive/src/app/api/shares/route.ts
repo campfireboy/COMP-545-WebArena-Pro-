@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 const createShareSchema = z.object({
     fileId: z.string().optional(),
     folderId: z.string().optional(),
-    sharedWithEmail: z.string().email().optional(),
+    sharedWithEmail: z.string().optional(),
     permission: z.enum(["READ", "COMMENT", "EDIT"]),
     linkShare: z.boolean().optional(),
 });
@@ -68,13 +68,18 @@ export async function POST(req: Request) {
         // Generate unique link token
         linkToken = crypto.randomBytes(16).toString("hex");
     } else if (sharedWithEmail) {
-        // Find user by email
-        const recipient = await prisma.user.findUnique({
-            where: { email: sharedWithEmail },
+        // Find user by email OR username
+        const recipient = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email: sharedWithEmail },
+                    { username: sharedWithEmail }
+                ]
+            },
             select: { id: true },
         });
         if (!recipient) {
-            return NextResponse.json({ error: "User not found with that email" }, { status: 404 });
+            return NextResponse.json({ error: "User not found" }, { status: 404 });
         }
         sharedWithUserId = recipient.id;
     } else {
@@ -93,7 +98,7 @@ export async function POST(req: Request) {
         include: {
             file: { select: { id: true, name: true } },
             folder: { select: { id: true, name: true } },
-            sharedWithUser: { select: { id: true, email: true, name: true } },
+            sharedWithUser: { select: { id: true, email: true, name: true, username: true } },
         },
     });
 
@@ -119,7 +124,7 @@ export async function GET(req: Request) {
         include: {
             file: { select: { id: true, name: true, mimeType: true } },
             folder: { select: { id: true, name: true } },
-            sharedWithUser: { select: { id: true, email: true, name: true } },
+            sharedWithUser: { select: { id: true, email: true, name: true, username: true } },
         },
         orderBy: { createdAt: "desc" },
     });

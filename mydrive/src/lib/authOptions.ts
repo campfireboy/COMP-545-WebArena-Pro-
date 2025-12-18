@@ -27,10 +27,26 @@ export const authOptions: NextAuthOptions = {
         if (!user?.password) return null;
 
         if (user.password !== hashPassword(password)) return null;
-        return { id: user.id, email: user.email, name: user.name ?? "" };
+        return { id: user.id, email: user.email, name: user.name ?? "", username: user.username };
       },
     }),
   ],
+  callbacks: {
+    async session({ session, token }) {
+      if (session.user) {
+        (session.user as any).username = token.username;
+        (session.user as any).id = token.id;
+      }
+      return session;
+    },
+    async jwt({ token, user }) {
+      if (user) {
+        token.username = (user as any).username;
+        token.id = user.id;
+      }
+      return token;
+    }
+  },
   pages: { signIn: "/login" },
   secret: process.env.NEXTAUTH_SECRET,
 };

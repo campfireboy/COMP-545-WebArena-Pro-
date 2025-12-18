@@ -33,12 +33,15 @@ export async function GET(
 
   const file = await prisma.fileObject.findUnique({
     where: { id },
-    select: { id: true, name: true, mimeType: true, size: true, s3Key: true, ownerId: true, folderId: true },
+    select: {
+      id: true, name: true, mimeType: true, size: true, s3Key: true, ownerId: true, folderId: true,
+      shares: { where: { sharedWithUserId: user.id }, select: { id: true } }
+    },
   });
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Check if user owns the file OR has access via shared folder
-  let hasAccess = file.ownerId === user.id;
+  // Check if user owns the file OR has access via shared folder OR direct share
+  let hasAccess = file.ownerId === user.id || file.shares.length > 0;
 
   if (!hasAccess && file.folderId) {
     // Check if any parent folder is shared with the user

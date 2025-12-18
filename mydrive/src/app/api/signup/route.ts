@@ -14,6 +14,7 @@ export async function POST(req: Request) {
       email: z.string().email(),
       password: z.string().min(6),
       name: z.string().min(1).optional(),
+      username: z.string().min(3).regex(/^[a-zA-Z0-9_-]+$/),
     })
     .safeParse(body);
 
@@ -21,17 +22,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
 
-  const { email, password, name } = parsed.data;
+  const { email, password, name, username } = parsed.data;
 
-  const exists = await prisma.user.findUnique({ where: { email } });
+  const exists = await prisma.user.findFirst({
+    where: {
+      OR: [{ email }, { username }],
+    },
+  });
+
   if (exists) {
-    return NextResponse.json({ error: "Email already in use" }, { status: 409 });
+    return NextResponse.json({ error: "Email or username already in use" }, { status: 409 });
   }
 
   const user = await prisma.user.create({
-    data: { email, name, password: hashPassword(password) },
+    data: { email, username, name, password: hashPassword(password) },
   });
 
-  // Optional: create a root folder record or leave root as "null parentId"
   return NextResponse.json({ id: user.id });
 }

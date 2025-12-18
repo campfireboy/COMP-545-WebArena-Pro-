@@ -26,14 +26,51 @@ export async function POST(req: Request) {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  let fileOwnerId = user.id;
+  let sharesToCreate: any[] = [];
+
+  if (parsed.data.folderId) {
+    const folder = await prisma.folder.findUnique({
+      where: { id: parsed.data.folderId },
+      include: { shares: true }
+    });
+
+    if (folder && folder.ownerId !== user.id) {
+      // 1. Transfer ownership to folder owner
+      fileOwnerId = folder.ownerId;
+
+      // 2. Share with the uploader (EDIT permission)
+      sharesToCreate.push({
+        ownerId: folder.ownerId,
+        sharedWithUserId: user.id,
+        permission: "EDIT",
+      });
+
+      // 3. Share with everyone else who has access to the folder
+      // (Cascading shares)
+      for (const s of folder.shares) {
+        if (s.sharedWithUserId && s.sharedWithUserId !== user.id) {
+          sharesToCreate.push({
+            ownerId: folder.ownerId,
+            sharedWithUserId: s.sharedWithUserId,
+            permission: s.permission,
+          });
+        }
+      }
+    }
+  }
+
   const file = await prisma.fileObject.create({
     data: {
       name: parsed.data.name,
       size: parsed.data.size,
       mimeType: parsed.data.mimeType,
       s3Key: parsed.data.s3Key,
-      ownerId: user.id,
+      ownerId: fileOwnerId,
       folderId: parsed.data.folderId,
+      shares: {
+        create: sharesToCreate
+      }
     },
   });
 

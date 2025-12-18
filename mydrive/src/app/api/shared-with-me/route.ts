@@ -24,7 +24,7 @@ export async function GET(_req: Request) {
         include: {
             file: { select: { id: true, name: true, mimeType: true, size: true } },
             folder: { select: { id: true, name: true } },
-            owner: { select: { id: true, email: true, name: true } },
+            owner: { select: { id: true, email: true, name: true, username: true } },
         },
         orderBy: { createdAt: "desc" },
     });

@@ -11,6 +11,29 @@ const listQuerySchema = z.object({
   parentId: z.string().nullable().optional(),
 });
 
+// Helper to get effective permission recursively
+const getEffectivePermissions = async (folderId: string, userId: string): Promise<{ permission: "EDIT" | "VIEW", ownerId: string } | null> => {
+  let currentId: string | null = folderId;
+  while (currentId) {
+    const folder: any = await prisma.folder.findUnique({
+      where: { id: currentId },
+      include: { shares: true }
+    });
+    if (!folder) return null;
+
+    if (folder.ownerId === userId) return { permission: "EDIT", ownerId: folder.ownerId }; // Owner has full restart
+
+    const share = folder.shares.find((s: any) => s.sharedWithUserId === userId);
+    if (share) {
+      // Found a share for this user
+      return { permission: share.permission === "EDIT" ? "EDIT" : "VIEW", ownerId: folder.ownerId };
+    }
+
+    currentId = folder.parentId;
+  }
+  return null;
+};
+
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email;
@@ -123,8 +146,44 @@ export async function GET(req: Request) {
     }),
   ]);
 
+  // Calculate breadcrumbs
+  const breadcrumbs: { id: string; name: string }[] = [];
+  if (parentId) {
+    let currentId: string | null = parentId;
+    while (currentId) {
+      const ancestor: { id: string; name: string; parentId: string | null } | null = await prisma.folder.findUnique({
+        where: { id: currentId },
+        select: { id: true, name: true, parentId: true },
+      });
+      if (ancestor) {
+        // Check if user has access to this ancestor
+        const hasAccess = await hasAccessToFolder(ancestor.id, user.id);
+        if (!hasAccess) break;
+
+        breadcrumbs.unshift({ id: ancestor.id, name: ancestor.name });
+        currentId = ancestor.parentId;
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Calculate effective permission for the current folder
+  let permission: "EDIT" | "VIEW" = "VIEW";
+  if (parentId) {
+    const effective = await getEffectivePermissions(parentId, user.id);
+    if (effective) {
+      permission = effective.permission;
+    }
+  } else {
+    // Root (My Drive) is always EDIT (Owner)
+    permission = "EDIT";
+  }
+
   return NextResponse.json({
     parentId,
+    permission,
+    breadcrumbs,
     folders: allFolders,
     files: allFiles,
   });
@@ -163,21 +222,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "User not found" }, { status: 401 });
   }
 
-  // If parentId provided, ensure it belongs to the user
+  let newFolderOwnerId = user.id;
+
+  // If parentId provided, ensure it belongs to the user or user has EDIT access
   if (parentId) {
-    const parent = await prisma.folder.findFirst({
-      where: { id: parentId, ownerId: user.id },
-      select: { id: true },
-    });
-    if (!parent) {
-      return NextResponse.json({ error: "Parent folder not found" }, { status: 404 });
+    const parent = await prisma.folder.findUnique({ where: { id: parentId } });
+    if (!parent) return NextResponse.json({ error: "Parent folder not found" }, { status: 404 });
+
+    const effective = await getEffectivePermissions(parentId, user.id);
+    if (!effective || effective.permission !== "EDIT") {
+      return NextResponse.json({ error: "Unauthorized (Need EDIT permission)" }, { status: 403 });
+    }
+
+    // If allowed, the new folder should belong to the OWNER of the shared tree (or the parent's owner)
+    // to maintain the "shared" status recursively.
+    if (effective.ownerId !== user.id) {
+      newFolderOwnerId = effective.ownerId;
     }
   }
 
   const created = await prisma.folder.create({
     data: {
       name: name.trim(),
-      ownerId: user.id,
+      ownerId: newFolderOwnerId,
       parentId: parentId ?? null,
     },
     select: { id: true, name: true, parentId: true, createdAt: true },

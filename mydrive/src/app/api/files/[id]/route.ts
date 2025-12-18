@@ -12,6 +12,8 @@ export const runtime = "nodejs";
 const patchSchema = z.object({
   folderId: z.string().nullable().optional(),
   name: z.string().min(1).optional(),
+  s3Key: z.string().min(1).optional(),
+  size: z.number().int().nonnegative().optional(),
 });
 
 type Ctx = { params: Promise<{ id: string }> | { id: string } };
@@ -52,13 +54,34 @@ export async function PATCH(
   });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 401 });
 
-  const owned = await prisma.fileObject.findFirst({
-    where: { id: fileId, ownerId: user.id },
-    select: { id: true },
+  const file = await prisma.fileObject.findUnique({
+    where: { id: fileId },
+    select: { id: true, ownerId: true, folderId: true },
   });
-  if (!owned) return NextResponse.json({ error: "File not found" }, { status: 404 });
+  if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
-  const { folderId, name } = parsed.data;
+  let canEdit = false;
+  if (file.ownerId === user.id) {
+    canEdit = true;
+  } else if (file.folderId) {
+    const folder = await prisma.folder.findUnique({
+      where: { id: file.folderId },
+      include: { shares: true }
+    });
+    if (folder) {
+      if (folder.ownerId === user.id) canEdit = true;
+      else {
+        const share = folder.shares.find(s => s.sharedWithUserId === user.id && s.permission === "EDIT");
+        if (share) canEdit = true;
+      }
+    }
+  }
+
+  if (!canEdit) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const { folderId, name, s3Key, size } = parsed.data;
 
   // If moving into a folder, confirm folder belongs to user
   if (folderId !== undefined && folderId !== null) {
@@ -71,15 +94,11 @@ export async function PATCH(
     }
   }
 
-  // Defensive fix: Enforce Rename OR Move.
-  // The UI does not support doing both at once.
-  // This prevents accidental moves (folderId becoming null) during rename.
   const dataToUpdate: any = {};
-  if (name !== undefined) {
-    dataToUpdate.name = name;
-  } else if (folderId !== undefined) {
-    dataToUpdate.folderId = folderId;
-  }
+  if (name !== undefined) dataToUpdate.name = name;
+  if (folderId !== undefined) dataToUpdate.folderId = folderId;
+  if (s3Key !== undefined) dataToUpdate.s3Key = s3Key;
+  if (size !== undefined) dataToUpdate.size = size;
 
   const updated = await prisma.fileObject.update({
     where: { id: fileId },
@@ -118,11 +137,36 @@ export async function DELETE(
   });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 401 });
 
-  const file = await prisma.fileObject.findFirst({
-    where: { id: fileId, ownerId: user.id },
-    select: { id: true, s3Key: true },
+  const file = await prisma.fileObject.findUnique({
+    where: { id: fileId },
+    select: { id: true, s3Key: true, ownerId: true, folderId: true },
   });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
+
+  let canDelete = false;
+  if (file.ownerId === user.id) {
+    canDelete = true;
+  } else if (file.folderId) {
+    // Check if user has EDIT permission on the parent folder
+    const folder = await prisma.folder.findUnique({
+      where: { id: file.folderId },
+      include: { shares: true },
+    });
+    if (folder) {
+      if (folder.ownerId === user.id) canDelete = true;
+      else {
+        const share = folder.shares.find(s => s.sharedWithUserId === user.id && s.permission === "EDIT");
+        if (share) canDelete = true;
+      }
+    }
+  }
+
+  if (!canDelete) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  // delete shares first (manual cascade)
+  await prisma.share.deleteMany({ where: { fileId } });
 
   // delete DB row
   await prisma.fileObject.delete({ where: { id: fileId } });

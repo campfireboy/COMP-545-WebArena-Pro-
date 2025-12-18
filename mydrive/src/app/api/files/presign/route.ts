@@ -10,6 +10,28 @@ import { s3 } from "@/lib/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+// Helper to get effective permission recursively
+const getEffectivePermissions = async (folderId: string, userId: string): Promise<"EDIT" | "VIEW" | null> => {
+  let currentId: string | null = folderId;
+  while (currentId) {
+    const folder: any = await prisma.folder.findUnique({
+      where: { id: currentId },
+      include: { shares: true }
+    });
+    if (!folder) return null;
+
+    if (folder.ownerId === userId) return "EDIT";
+
+    const share = folder.shares.find((s: any) => s.sharedWithUserId === userId);
+    if (share) {
+      return share.permission === "EDIT" ? "EDIT" : "VIEW";
+    }
+
+    currentId = folder.parentId;
+  }
+  return null;
+};
+
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email;
@@ -39,9 +61,15 @@ export async function POST(req: Request) {
 
   // Optional safety: verify folder ownership (if folderId provided)
   if (parsed.data.folderId) {
-    const folder = await prisma.folder.findUnique({ where: { id: parsed.data.folderId } });
-    if (!folder || folder.ownerId !== user.id) {
-      return NextResponse.json({ error: "Invalid folderId" }, { status: 400 });
+    const folder = await prisma.folder.findUnique({
+      where: { id: parsed.data.folderId },
+    });
+
+    if (!folder) return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+
+    const permission = await getEffectivePermissions(parsed.data.folderId, user.id);
+    if (permission !== "EDIT") {
+      return NextResponse.json({ error: "Unauthorized (Need EDIT permission)" }, { status: 403 });
     }
   }
 

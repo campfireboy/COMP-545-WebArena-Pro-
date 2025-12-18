@@ -32,10 +32,31 @@ const handler = NextAuth({
 
         if (user.password !== hashPassword(password)) return null;
 
-        return { id: user.id, email: user.email, name: user.name ?? "" };
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name ?? "",
+          username: user.username,
+        };
       },
     }),
   ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.username = user.username;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.id = token.id as string;
+        session.user.username = token.username as string | null | undefined;
+      }
+      return session;
+    },
+  },
   pages: {
     signIn: "/login",
   },

@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
+import { MediaPreviewModal } from "@/components/MediaPreviewModal";
 
 type Folder = {
   id: string;
@@ -11,7 +13,7 @@ type Folder = {
   parentId: string | null;
   createdAt: string;
   ownerId: string;
-  owner?: { id: string; name: string | null; email: string };
+  owner?: { id: string; name: string | null; email: string; username?: string | null };
 };
 
 type FileObject = {
@@ -22,7 +24,7 @@ type FileObject = {
   folderId: string | null;
   createdAt: string;
   ownerId: string;
-  owner?: { id: string; name: string | null; email: string };
+  owner?: { id: string; name: string | null; email: string; username?: string | null };
 };
 
 type MenuState =
@@ -44,7 +46,7 @@ type SharePopoverState = null | {
   kind: "folder" | "file";
   id: string;
   name: string;
-  owner?: { id: string; name: string | null; email: string };
+  owner?: { id: string; name: string | null; email: string; username?: string | null };
   isOwned: boolean;
   targetRef: HTMLElement;
 };
@@ -58,7 +60,7 @@ type UnshareModalState = null | {
 
 type Share = {
   id: string;
-  sharedWithUser: { email: string; name: string | null } | null;
+  sharedWithUser: { email: string; name: string | null; username?: string | null } | null;
   permission: string;
 };
 
@@ -136,7 +138,9 @@ const SharedItemPopover = ({
         <div>
           {item.isOwned
             ? "Me (You)"
-            : `${item.owner?.name || item.owner?.email || "Unknown"} (Shared with you)`}
+            : item.owner?.username
+              ? item.owner.name ? `${item.owner.username} (${item.owner.name})` : item.owner.username
+              : item.owner?.name || item.owner?.email || "Unknown"}
         </div>
       </div>
 
@@ -148,11 +152,15 @@ const SharedItemPopover = ({
           <div style={{ color: "#666" }}>Not shared</div>
         ) : (
           <div style={{ maxHeight: 100, overflow: "auto" }}>
-            {shares.map((s) => (
-              <div key={s.id} style={{ marginBottom: 4 }}>
-                {s.sharedWithUser?.name || s.sharedWithUser?.email || "Link"} ({s.permission})
-              </div>
-            ))}
+            {shares.map((s) => {
+              const display = s.sharedWithUser?.username || s.sharedWithUser?.name || s.sharedWithUser?.email || "Link";
+
+              return (
+                <div key={s.id} style={{ marginBottom: 4 }}>
+                  {display} ({s.permission})
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -188,10 +196,8 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   const [search, setSearch] = useState("");
   // const [newFolderName, setNewFolderName] = useState(""); // Removed inline input
   const [uploading, setUploading] = useState(false);
-  const [menu, setMenu] = useState<MenuState>(null);
+  const [menu, setMenu] = useState<{ kind: "folder" | "file"; id: string; x: number; y: number; multi?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-
-  // New Folder Modal
   const [createFolderModalOpen, setCreateFolderModalOpen] = useState(false);
   const [newFolderNameInput, setNewFolderNameInput] = useState("");
 
@@ -201,17 +207,69 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   const addMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [breadcrumbs, setBreadcrumbs] = useState<{ id: string; name: string }[]>([]);
+
   // Share Modal & Popover
   const [shareModal, setShareModal] = useState<ShareModalState>(null);
   const [sharePopover, setSharePopover] = useState<SharePopoverState>(null);
   const [shares, setShares] = useState<Share[]>([]);
   const [shareEmail, setShareEmail] = useState("");
+  const [sharePermission, setSharePermission] = useState("READ");
   const [loadingShares, setLoadingShares] = useState(false);
 
   // Unshare Check
   const [unshareModal, setUnshareModal] = useState<UnshareModalState>(null);
 
-  const [movePicker, setMovePicker] = useState<null | { kind: "folder" | "file"; id: string }>(null);
+  const [movePicker, setMovePicker] = useState<null | { ids: string[]; display: string }>(null);
+  const [previewFile, setPreviewFile] = useState<FileObject | null>(null);
+
+  async function deleteSelected() {
+    setMenu(null);
+    if (!confirm(`Delete ${selectedIds.size} items?`)) return;
+
+    for (const key of Array.from(selectedIds)) {
+      const [kind, id] = key.split(":");
+      const res = await fetch(`/api/${kind}s/${id}`, { method: "DELETE" });
+      if (!res.ok) console.error(`Failed to delete ${kind} ${id}`);
+    }
+    setSelectedIds(new Set());
+    await load();
+  }
+
+  function initiateMoveSelected() {
+    setMenu(null);
+    setMovePicker({
+      ids: Array.from(selectedIds),
+      display: `${selectedIds.size} items`
+    });
+  }
+
+  async function performMove(targetId: string | null) {
+    if (!movePicker) return;
+    for (const key of movePicker.ids) {
+      const [kind, id] = key.split(":");
+      // Skip if moving folder into itself (simple check)
+      if (kind === "folder" && id === targetId) continue;
+
+      const endpoint = kind === "file" ? `/api/files/${id}` : `/api/folders/${id}`;
+      const payload = kind === "file" ? { folderId: targetId } : { parentId: targetId };
+
+      await fetch(endpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+    setMovePicker(null);
+    setSelectedIds(new Set()); // Clear selection after move
+    await load();
+  }
+
+  // --- SINGLE ACTIONS WRAPPERS ---
+  function initiateMoveSingle(kind: "file" | "folder", id: string) {
+    setMenu(null);
+    setMovePicker({ ids: [`${kind}:${id}`], display: kind });
+  }
 
   async function load() {
     setLoading(true);
@@ -227,6 +285,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     const data = await res.json();
     setFolders(data.folders ?? []);
     setFiles(data.files ?? []);
+    setBreadcrumbs(data.breadcrumbs ?? []);
     setLoading(false);
   }
 
@@ -259,6 +318,68 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     };
   }, [menu, addMenuOpen]);
 
+  // Sorting State
+  const [sortField, setSortField] = useState<"name" | "type">("type");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  // Selection State
+  // Format: "folder:id" or "file:id"
+  // Selection State
+  // Format: "folder:id" or "file:id"
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+
+  function handleSelectionClick(e: React.MouseEvent, item: { kind: "folder" | "file", id: string }, index: number, allItems: { kind: "folder" | "file", id: string }[]) {
+    const key = `${item.kind}:${item.id}`;
+    e.stopPropagation();
+
+    if (e.shiftKey && lastSelectedId) {
+      const lastIndex = allItems.findIndex(i => `${i.kind}:${i.id}` === lastSelectedId);
+      if (lastIndex !== -1) {
+        const start = Math.min(lastIndex, index);
+        const end = Math.max(lastIndex, index);
+        const newSelection = new Set(selectedIds);
+        if (!e.ctrlKey && !e.metaKey && !selectionMode) newSelection.clear();
+
+        for (let i = start; i <= end; i++) {
+          newSelection.add(`${allItems[i].kind}:${allItems[i].id}`);
+        }
+        setSelectedIds(newSelection);
+        return;
+      }
+    }
+
+    if (e.ctrlKey || e.metaKey || selectionMode) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      setLastSelectedId(key);
+    } else {
+      setSelectedIds(new Set([key]));
+      setLastSelectedId(key);
+    }
+  }
+
+  function handleContextMenu(e: React.MouseEvent, kind: "folder" | "file", id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const key = `${kind}:${id}`;
+
+    let newSelection = new Set(selectedIds);
+    if (!selectedIds.has(key)) {
+      newSelection = new Set([key]);
+      setLastSelectedId(key);
+    }
+    setSelectedIds(newSelection);
+
+    // Open Menu
+    setMenu({ kind, id, x: e.clientX, y: e.clientY, multi: newSelection.size > 1 });
+  }
+
   const filteredFolders = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return folders;
@@ -271,9 +392,31 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     return files.filter((f) => f.name.toLowerCase().includes(q));
   }, [files, search]);
 
+  const sortedItems = useMemo(() => {
+    const combined = [
+      ...filteredFolders.map(f => ({ ...f, kind: "folder" as const })),
+      ...filteredFiles.map(f => ({ ...f, kind: "file" as const }))
+    ];
+
+    return combined.sort((a, b) => {
+      let res = 0;
+      if (sortField === "name") {
+        res = a.name.localeCompare(b.name);
+      } else if (sortField === "type") {
+        // Folders first in 'type' sort usually, but let's strictly sort by type string
+        const typeA = a.kind === "folder" ? "000_folder" : (a as FileObject).mimeType;
+        const typeB = b.kind === "folder" ? "000_folder" : (b as FileObject).mimeType;
+        res = typeA.localeCompare(typeB);
+      }
+      return sortDirection === "asc" ? res : -res;
+    });
+  }, [filteredFolders, filteredFiles, sortField, sortDirection]);
+
   const moveDestinations = useMemo(() => {
-    const excludeId = movePicker?.kind === "folder" ? movePicker.id : null;
-    return filteredFolders.filter((f) => f.id !== excludeId);
+    if (!movePicker) return filteredFolders;
+    // Exclude any folders that are currently being moved to avoid cycles/self-move
+    const movingFolderIds = new Set(movePicker.ids.filter(id => id.startsWith("folder:")).map(id => id.split(":")[1]));
+    return filteredFolders.filter((f) => !movingFolderIds.has(f.id));
   }, [filteredFolders, movePicker]);
 
   function isOwned(item: { owner?: { email: string } }) {
@@ -348,68 +491,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   // --- MOVE LOGIC ---
 
-  async function initiateMove(itemId: string, itemKind: "file" | "folder", targetId: string | null) {
-    setMenu(null);
-    setMovePicker(null);
 
-    // Check for shared parent
-    if (folderId) {
-      const res = await fetch(`/api/shares?folderId=${folderId}`);
-      if (res.ok) {
-        const currentFolderShares = await res.json();
-        if (currentFolderShares.length > 0) {
-          setUnshareModal({
-            itemKind,
-            itemId,
-            targetId,
-            parentShares: currentFolderShares
-          });
-          return;
-        }
-      }
-    }
-    await performMove(itemId, itemKind, targetId);
-  }
-
-  async function performMove(itemId: string, itemKind: "file" | "folder", targetId: string | null) {
-    const endpoint = itemKind === "file" ? `/api/files/${itemId}` : `/api/folders/${itemId}`;
-    const payload = itemKind === "file" ? { folderId: targetId } : { parentId: targetId };
-
-    const res = await fetch(endpoint, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data?.error || "Failed to move");
-      return;
-    }
-    await load();
-  }
-
-  async function handleUnshareDecision(keepShares: boolean) {
-    if (!unshareModal) return;
-    const { itemKind, itemId, targetId, parentShares } = unshareModal;
-    setUnshareModal(null);
-
-    if (keepShares) {
-      for (const s of parentShares) {
-        if (!s.sharedWithUser) continue;
-        await fetch("/api/shares", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            [itemKind === "file" ? "fileId" : "folderId"]: itemId,
-            sharedWithEmail: s.sharedWithUser.email,
-            permission: s.permission,
-          }),
-        });
-      }
-    }
-    await performMove(itemId, itemKind, targetId);
-  }
 
 
   // --- SHARING LOGIC ---
@@ -432,7 +514,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
       body: JSON.stringify({
         [shareModal.kind === "file" ? "fileId" : "folderId"]: shareModal.id,
         sharedWithEmail: shareEmail.trim(),
-        permission: "READ",
+        permission: sharePermission,
       }),
     });
     if (!res.ok) {
@@ -448,6 +530,17 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     if (!shareModal) return;
     const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE" });
     if (res.ok) await loadModalShares(shareModal.kind, shareModal.id);
+  }
+
+  async function updateSharePermission(shareId: string, newPermission: string) {
+    if (!shareModal) return;
+    const res = await fetch(`/api/shares/${shareId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permission: newPermission })
+    });
+    if (res.ok) await loadModalShares(shareModal.kind, shareModal.id);
+    else alert("Failed to update permission");
   }
 
   // --- RENDER HELPERS ---
@@ -476,297 +569,545 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", position: "relative" }}>
-      {/* Sidebar */}
-      <Sidebar activePage="drive" />
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <Header />
+      <div style={{ display: "flex", flex: 1, position: "relative" }}>
+        {/* Sidebar */}
+        <Sidebar activePage="drive" />
 
-      {/* Main */}
-      <main style={{ flex: 1, padding: 16, position: "relative" }}>
-        {/* Top Bar */}
-        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-          <input
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ flex: 1, padding: 8, border: "1px solid #ddd", borderRadius: 10 }}
-          />
-          <button onClick={() => signOut({ callbackUrl: "/login" })} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white" }}>
-            Sign Out
-          </button>
-        </div>
-
-        {loading ? <div>Loading...</div> : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            {/* FOLDERS */}
-            <section>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Folders</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-                {filteredFolders.map(f => {
-                  const owned = isOwned(f);
-                  return (
-                    <div key={f.id}
-                      onClick={() => router.push(`/drive/f/${f.id}`)}
-                      style={{
-                        border: "1px solid #eee", padding: 12, borderRadius: 12,
-                        display: "flex", alignItems: "center", justifyContent: "space-between",
-                        cursor: "pointer", background: "white"
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-                        <button
-                          onClick={(e) => toggleSharePopover(e, "folder", f)}
-                          style={{
-                            width: 34, height: 34, borderRadius: 10,
-                            border: "1px solid #ddd", background: "white",
-                            cursor: "pointer", fontSize: 16, flexShrink: 0
-                          }}
-                          title={owned ? "Share" : "Shared Details"}
-                        >
-                          👥
-                        </button>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>Folder {!owned ? `(Shared by ${f.owner?.name || f.owner?.email || "Unknown"})` : ""}</div>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={(e) => openMenu(e, "folder", f.id)}
-                        style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", marginLeft: 8 }}
-                      >
-                        ⋯
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* FILES */}
-            <section>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Files</div>
-              <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden" }}>
-                {filteredFiles.map(file => {
-                  const owned = isOwned(file);
-                  return (
-                    <div key={file.id} style={{ display: "flex", justifyContent: "space-between", padding: 12, borderBottom: "1px solid #f2f2f2", alignItems: "center" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-                        <button
-                          onClick={(e) => toggleSharePopover(e, "file", file)}
-                          style={{
-                            width: 34, height: 34, borderRadius: 10,
-                            border: "1px solid #ddd", background: "white",
-                            cursor: "pointer", fontSize: 16, flexShrink: 0
-                          }}
-                          title={owned ? "Share" : "Shared Details"}
-                        >
-                          👥
-                        </button>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 700 }}>{file.name}</div>
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>{file.mimeType} • {Math.round(file.size / 1024)} KB {!owned ? `(Shared by ${file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={(e) => openMenu(e, "file", file.id)}
-                        style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", marginLeft: 8 }}
-                      >
-                        ⋯
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+        {/* Main */}
+        <main
+          style={{ flex: 1, padding: 16, position: "relative" }}
+          onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }}
+        >
+          {/* Top Bar */}
+          <div style={{ marginBottom: 16 }} onClick={(e) => e.stopPropagation()}>
+            <input
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ width: "100%", padding: 8, border: "1px solid #ddd", borderRadius: 10 }}
+            />
           </div>
-        )}
 
-        {/* PLUS BUTTON */}
-        <div style={{ position: "fixed", bottom: 40, left: 272, zIndex: 1000 }}>
-          <button
-            ref={addBtnRef}
-            onClick={() => setAddMenuOpen(!addMenuOpen)}
-            style={{
-              width: 56, height: 56, borderRadius: "50%",
-              background: "#1a73e8", color: "white",
-              border: "none", fontSize: 32, lineHeight: 1,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center"
-            }}
-          >
-            +
-          </button>
+          {loading ? <div>Loading...</div> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {/* BREADCRUMBS & SORT */}
+              <div
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, fontWeight: 600, color: "#5f6368" }}>
+                  <span
+                    onClick={() => router.push("/drive")}
+                    style={{ cursor: "pointer", color: breadcrumbs.length === 0 ? "#202124" : "inherit" }}
+                  >
+                    My Drive
+                  </span>
+                  {breadcrumbs.map((b, i) => (
+                    <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{'>'}</span>
+                      <span
+                        onClick={() => i < breadcrumbs.length - 1 ? router.push(`/drive/f/${b.id}`) : null}
+                        style={{
+                          cursor: i < breadcrumbs.length - 1 ? "pointer" : "default",
+                          color: i === breadcrumbs.length - 1 ? "#202124" : "inherit"
+                        }}
+                      >
+                        {b.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
 
-          {addMenuOpen && (
-            <div
-              ref={addMenuRef}
+                {/* SORT CONTROLS */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <select
+                    value={sortField}
+                    onChange={(e) => setSortField(e.target.value as any)}
+                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #ddd", background: "white", cursor: "pointer" }}
+                  >
+                    <option value="name">Name</option>
+                    <option value="type">Type</option>
+                  </select>
+                  <button
+                    onClick={() => setSortDirection(prev => prev === "asc" ? "desc" : "asc")}
+                    style={{
+                      width: 32, height: 32, borderRadius: 8, border: "1px solid #ddd", background: "white",
+                      display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer"
+                    }}
+                    title={sortDirection === "asc" ? "Ascending" : "Descending"}
+                  >
+                    {sortDirection === "asc" ? "↑" : "↓"}
+                  </button>
+                </div>
+              </div>
+
+              {/* ACTION TOOLBAR (Always Visible) */}
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "8px 16px", background: "#f1f3f4", borderRadius: 8, marginBottom: 12,
+                  border: "1px solid #dadce0",
+                  opacity: selectedIds.size > 0 ? 1 : 0.5,
+                  pointerEvents: selectedIds.size > 0 ? "auto" : "none",
+                  transition: "opacity 0.2s"
+                }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <button
+                    onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18, color: "#5f6368", visibility: selectedIds.size > 0 ? "visible" : "hidden" }}
+                  >
+                    ✕
+                  </button>
+                  <span style={{ fontWeight: 600, color: "#202124" }}>
+                    {selectedIds.size > 0 ? `${selectedIds.size} selected` : "Select items..."}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {selectedIds.size === 1 && (() => {
+                    const key = Array.from(selectedIds)[0];
+                    const [kind, id] = key.split(":");
+                    const item = kind === "folder" ? folders.find(f => f.id === id) : files.find(f => f.id === id);
+                    if (item) {
+                      return (
+                        <>
+                          <button
+                            onClick={() => kind === "file" ? renameFile(id) : renameFolder(id)}
+                            title="Rename"
+                            style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={(e) => toggleSharePopover(e, kind as "folder" | "file", item)}
+                            title="Share"
+                            style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                          >
+                            👥
+                          </button>
+                        </>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  {Array.from(selectedIds).some(id => id.startsWith("file:")) && (
+                    <button
+                      onClick={() => {
+                        const fileIds = Array.from(selectedIds).filter(id => id.startsWith("file:"));
+                        if (fileIds.length === 1) {
+                          const fid = fileIds[0].split(":")[1];
+                          window.location.href = `/api/files/${fid}/download`;
+                        } else {
+                          alert("Batch download not implemented yet.");
+                        }
+                      }}
+                      title="Download"
+                      style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                    >
+                      ⬇️
+                    </button>
+                  )}
+                  <button onClick={initiateMoveSelected} title="Move" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}>➡️</button>
+                  <button onClick={deleteSelected} title="Delete" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}>🗑️</button>
+                </div>
+              </div>
+
+              {/* UNIFIED LIST */}
+              <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden", userSelect: "none" }}>
+                {sortedItems.map((item, index) => {
+                  if (item.kind === "folder") {
+                    const f = item as Folder;
+                    const owned = isOwned(f);
+                    const isSelected = selectedIds.has(`folder:${f.id}`);
+                    return (
+                      <div key={`folder-${f.id}`}
+                        onContextMenu={(e) => handleContextMenu(e, "folder", f.id)}
+                        onClick={(e) => handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems)}
+                        onDoubleClick={() => router.push(`/drive/f/${f.id}`)}
+                        style={{
+                          display: "flex", justifyContent: "space-between", padding: 12, borderBottom: "1px solid #f2f2f2", alignItems: "center",
+                          cursor: "pointer",
+                          background: isSelected ? "#e8f0fe" : "white"
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                          {/* FOLDER THUMBNAIL */}
+                          <div
+                            style={{
+                              width: 40, height: 40, borderRadius: 8, overflow: "hidden",
+                              background: isSelected ? "#d2e3fc" : "#e8f0fe", display: "flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0, fontSize: 20
+                            }}
+                          >
+                            📁
+                          </div>
+
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>Folder {!owned ? `(Shared by ${f.owner?.username || f.owner?.name || f.owner?.email || "Unknown"})` : ""}</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={(e) => toggleSharePopover(e, "folder", f)}
+                            style={{
+                              width: 34, height: 34, borderRadius: 10,
+                              border: "1px solid #ddd", background: "white",
+                              cursor: "pointer", fontSize: 16, flexShrink: 0,
+                              display: "flex", alignItems: "center", justifyContent: "center"
+                            }}
+                            title={owned ? "Share" : "Shared Details"}
+                          >
+                            👥
+                          </button>
+                          {selectionMode ? (
+                            <div
+                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems); }}
+                              style={{ width: 34, height: 34, borderRadius: 10, border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc", background: isSelected ? "#1a73e8" : "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              {isSelected && <span style={{ color: "white", fontSize: 18 }}>✓</span>}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                handleContextMenu(e, "folder", f.id);
+                              }}
+                              style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              ⋯
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    const file = item as FileObject;
+                    const owned = isOwned(file);
+                    const isSelected = selectedIds.has(`file:${file.id}`);
+                    return (
+                      <div key={`file-${file.id}`}
+                        onContextMenu={(e) => handleContextMenu(e, "file", file.id)}
+                        onClick={(e) => handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems)}
+                        onDoubleClick={() => {
+                          if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType)) {
+                            setPreviewFile(file);
+                          } else {
+                            router.push(`/drive/file/${file.id}`);
+                          }
+                        }}
+                        style={{
+                          display: "flex", justifyContent: "space-between", padding: 12, borderBottom: "1px solid #f2f2f2", alignItems: "center",
+                          background: isSelected ? "#e8f0fe" : "white",
+                          cursor: "default"
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                          {/* THUMBNAIL */}
+                          <div
+                            style={{
+                              width: 40, height: 40, borderRadius: 8, overflow: "hidden",
+                              background: isSelected ? "#d2e3fc" : "#f1f3f4", display: "flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0
+                            }}
+                          >
+                            {file.mimeType === "image/jpeg" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={`/api/files/${file.id}/download`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : file.mimeType === "video/mp4" ? (
+                              <video src={`/api/files/${file.id}/download`} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                            ) : file.mimeType === "audio/mpeg" ? (
+                              <span style={{ fontSize: 20 }}>📻</span>
+                            ) : (
+                              <span style={{ fontSize: 20 }}>📄</span>
+                            )}
+                          </div>
+
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{ fontWeight: 700, cursor: ["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType) ? "pointer" : "default" }}
+                              title={["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType) ? "Double click to preview" : ""}
+                            >
+                              {item.name}
+                            </div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>{file.mimeType} • {Math.round(file.size / 1024)} KB {!owned ? `(Shared by ${file.owner?.username || file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={(e) => toggleSharePopover(e, "file", file)}
+                            style={{
+                              width: 34, height: 34, borderRadius: 10,
+                              border: "1px solid #ddd", background: "white",
+                              cursor: "pointer", fontSize: 16, flexShrink: 0,
+                              display: "flex", alignItems: "center", justifyContent: "center"
+                            }}
+                            title={owned ? "Share" : "Shared Details"}
+                          >
+                            👥
+                          </button>
+                          {selectionMode ? (
+                            <div
+                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems); }}
+                              style={{ width: 34, height: 34, borderRadius: 10, border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc", background: isSelected ? "#1a73e8" : "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              {isSelected && <span style={{ color: "white", fontSize: 18 }}>✓</span>}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                handleContextMenu(e, "file", file.id);
+                              }}
+                              style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              ⋯
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                })}
+              </div>
+            </div >
+          )
+          }
+
+          {/* PLUS BUTTON */}
+          <div style={{ position: "fixed", bottom: 40, left: 272, zIndex: 1000 }}>
+            <button
+              ref={addBtnRef}
+              onClick={() => setAddMenuOpen(!addMenuOpen)}
               style={{
-                position: "absolute", bottom: 70, left: 0,
-                background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-                width: 180, overflow: "hidden", border: "1px solid #ddd"
+                width: 56, height: 56, borderRadius: "50%",
+                background: "#1a73e8", color: "white",
+                border: "none", fontSize: 32, lineHeight: 1,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center"
               }}
             >
-              <button
-                onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
-                style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+              +
+            </button>
+
+            {addMenuOpen && (
+              <div
+                ref={addMenuRef}
+                style={{
+                  position: "absolute", bottom: 70, left: 0,
+                  background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                  width: 180, overflow: "hidden", border: "1px solid #ddd"
+                }}
               >
-                New Folder
-              </button>
-              <button
-                onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
-                style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-              >
-                File Upload
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Hidden File Input */}
-        <input type="file" ref={fileInputRef} style={{ display: "none" }} onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) {
-            setUploading(true);
-            fetch("/api/files/presign", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, folderId: folderId ?? null }) })
-              .then(r => r.json())
-              .then(({ uploadUrl, s3Key }) => fetch(uploadUrl, { method: "PUT", body: f }).then(() => ({ s3Key })))
-              .then(({ s3Key }) => fetch("/api/files/finalize", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, s3Key, folderId: folderId ?? null }) }))
-              .then(() => load())
-              .finally(() => setUploading(false));
-          }
-        }} />
-
-        {/* Overlay if Uploading */}
-        {uploading && (
-          <div style={{ position: "fixed", bottom: 24, right: 24, padding: "12px 24px", background: "#333", color: "white", borderRadius: 8 }}>
-            Uploading...
+                <button
+                  onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
+                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                >
+                  New Folder
+                </button>
+                <button
+                  onClick={async () => {
+                    setAddMenuOpen(false);
+                    const res = await fetch("/api/files/create", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ folderId: folderId ?? null }),
+                    });
+                    if (res.ok) await load();
+                    else alert("Failed to create document");
+                  }}
+                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                >
+                  New Document
+                </button>
+                <button
+                  onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
+                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                >
+                  File Upload
+                </button>
+              </div>
+            )}
           </div>
-        )}
 
-      </main>
+          {/* Hidden File Input */}
+          <input type="file" ref={fileInputRef} style={{ display: "none" }} onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) {
+              setUploading(true);
+              fetch("/api/files/presign", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, folderId: folderId ?? null }) })
+                .then(r => r.json())
+                .then(({ uploadUrl, s3Key }) => fetch(uploadUrl, { method: "PUT", body: f }).then(() => ({ s3Key })))
+                .then(({ s3Key }) => fetch("/api/files/finalize", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, s3Key, folderId: folderId ?? null }) }))
+                .then(() => load())
+                .finally(() => setUploading(false));
+            }
+          }} />
 
-      {/* MODALS */}
-      {createFolderModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "white", padding: 24, borderRadius: 12, width: 320 }}>
-            <h3 style={{ marginTop: 0 }}>New Folder</h3>
-            <input
-              autoFocus
-              placeholder="Folder name"
-              value={newFolderNameInput}
-              onChange={e => setNewFolderNameInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && createFolder()}
-              style={{ width: "100%", padding: 8, marginBottom: 16, border: "1px solid #ddd", borderRadius: 4 }}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button onClick={() => setCreateFolderModalOpen(false)} style={{ padding: "8px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#1a73e8" }}>Cancel</button>
-              <button onClick={createFolder} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}>Create</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <SharedItemPopover
-        item={sharePopover}
-        onClose={() => setSharePopover(null)}
-        onShare={() => {
-          if (sharePopover) {
-            setShareModal({ kind: sharePopover.kind, id: sharePopover.id, name: sharePopover.name });
-            setShareEmail("");
-            loadModalShares(sharePopover.kind, sharePopover.id);
+          {/* Overlay if Uploading */}
+          {
+            uploading && (
+              <div style={{ position: "fixed", bottom: 24, right: 24, padding: "12px 24px", background: "#333", color: "white", borderRadius: 8 }}>
+                Uploading...
+              </div>
+            )
           }
-        }}
-      />
 
-      {shareModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "white", padding: 24, borderRadius: 12, width: 500, maxWidth: "90%" }}>
-            <h3>Share "{shareModal.name}"</h3>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <input placeholder="user@example.com" value={shareEmail} onChange={e => setShareEmail(e.target.value)} style={{ flex: 1, padding: 8, border: "1px solid #ddd", borderRadius: 8 }} />
-              <button onClick={addShare} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 8, border: "none", cursor: "pointer" }}>Share</button>
-            </div>
-            <div>
-              <h4 style={{ marginBottom: 8 }}>People with access</h4>
-              {shares.map(s => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", margin: "4px 0", padding: 8, border: "1px solid #eee", borderRadius: 8 }}>
-                  <span>{s.sharedWithUser?.email}</span>
-                  <button onClick={() => removeShare(s.id)} style={{ background: "transparent", border: "none", color: "red", cursor: "pointer" }}>Remove</button>
+        </main >
+
+        {/* MODALS */}
+        {
+          createFolderModalOpen && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ background: "white", padding: 24, borderRadius: 12, width: 320 }}>
+                <h3 style={{ marginTop: 0 }}>New Folder</h3>
+                <input
+                  autoFocus
+                  placeholder="Folder name"
+                  value={newFolderNameInput}
+                  onChange={e => setNewFolderNameInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && createFolder()}
+                  style={{ width: "100%", padding: 8, marginBottom: 16, border: "1px solid #ddd", borderRadius: 4 }}
+                />
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button onClick={() => setCreateFolderModalOpen(false)} style={{ padding: "8px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#1a73e8" }}>Cancel</button>
+                  <button onClick={createFolder} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}>Create</button>
                 </div>
-              ))}
+              </div>
             </div>
-            <button onClick={() => setShareModal(null)} style={{ marginTop: 16, padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white", cursor: "pointer" }}>Done</button>
-          </div>
-        </div>
-      )}
+          )
+        }
 
-      {unshareModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 5000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "white", padding: 24, borderRadius: 12, width: 450, maxWidth: "90%", boxShadow: "0 10px 25px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ margin: "0 0 16px 0" }}>Move out of shared folder?</h3>
-            <p style={{ lineHeight: 1.5, color: "#444", marginBottom: 20 }}>
-              Would you like to also unshare this {unshareModal.itemKind}?
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <button
-                onClick={() => handleUnshareDecision(false)}
-                style={{ padding: "12px", background: "#d93025", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
-              >
-                Yes, Unshare (Remove Access)
-              </button>
-              <button
-                onClick={() => handleUnshareDecision(true)}
-                style={{ padding: "12px", background: "#f1f3f4", color: "#3c4043", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}
-              >
-                No, Maintain Shares (Copy Permissions)
-              </button>
-              <button
-                onClick={() => setUnshareModal(null)}
-                style={{ padding: "12px", background: "transparent", border: "1px solid #ddd", borderRadius: 8, cursor: "pointer", marginTop: 8 }}
-              >
-                Cancel Move
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONTEXT MENU */}
-      {menu && (
-        <div
-          ref={menuRef}
-          style={{
-            position: "fixed", top: menu.y, left: menu.x - 200, background: "white", border: "1px solid #ddd", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.1)", zIndex: 3000,
-            width: 200, display: "flex", flexDirection: "column"
+        <SharedItemPopover
+          item={sharePopover}
+          onClose={() => setSharePopover(null)}
+          onShare={() => {
+            if (sharePopover) {
+              setShareModal({ kind: sharePopover.kind, id: sharePopover.id, name: sharePopover.name });
+              setShareEmail("");
+              loadModalShares(sharePopover.kind, sharePopover.id);
+            }
           }}
-        >
-          <MenuItem label="Open" onClick={() => { if (menu.kind === "folder") router.push(`/drive/f/${menu.id}`); }} />
-          <MenuItem label="Rename" onClick={() => { if (menu.kind === "file") renameFile(menu.id); else renameFolder(menu.id); }} />
-          <MenuItem label="Move to..." onClick={() => setMovePicker({ kind: menu.kind, id: menu.id })} />
-          <MenuDivider />
-          <MenuItem label="Delete" danger onClick={() => { if (menu.kind === "file") deleteFile(menu.id); else deleteFolder(menu.id); }} />
-          {menu.kind === "file" && <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.id}/download`} />}
-        </div>
-      )}
+        />
 
-      {movePicker && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "white", padding: 20, borderRadius: 12, width: 400 }}>
-            <h3>Move {movePicker.kind}</h3>
-            <div style={{ maxHeight: 300, overflow: "auto", margin: "10px 0" }}>
-              <div onClick={() => initiateMove(movePicker.id, movePicker.kind, null)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee", fontWeight: 600 }}>My Drive (Root)</div>
-              {moveDestinations.map(f => (
-                <div key={f.id} onClick={() => initiateMove(movePicker.id, movePicker.kind, f.id)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee" }}>{f.name}</div>
-              ))}
-              {moveDestinations.length === 0 && <div style={{ padding: 10, opacity: 0.6 }}>No other folders</div>}
+        {
+          shareModal && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ background: "white", padding: 24, borderRadius: 12, width: 500, maxWidth: "90%" }}>
+                <h3>Share "{shareModal.name}"</h3>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  <input placeholder="Username or email" value={shareEmail} onChange={e => setShareEmail(e.target.value)} style={{ flex: 1, padding: 8, border: "1px solid #ddd", borderRadius: 8 }} />
+                  <select
+                    value={sharePermission}
+                    onChange={(e) => setSharePermission(e.target.value)}
+                    style={{ padding: 8, border: "1px solid #ddd", borderRadius: 8, background: "white" }}
+                  >
+                    <option value="READ">Viewer</option>
+                    <option value="EDIT">Editor</option>
+                  </select>
+                  <button onClick={addShare} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 8, border: "none", cursor: "pointer" }}>Share</button>
+                </div>
+                <div>
+                  <h4 style={{ marginBottom: 8 }}>People with access</h4>
+                  {shares.map(s => (
+                    <div key={s.id} style={{ display: "flex", justifyContent: "space-between", margin: "4px 0", padding: 8, border: "1px solid #eee", borderRadius: 8, alignItems: "center" }}>
+                      <span>{s.sharedWithUser?.username || s.sharedWithUser?.name || s.sharedWithUser?.email}</span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <select
+                          value={s.permission}
+                          onChange={(e) => updateSharePermission(s.id, e.target.value)}
+                          style={{ padding: 4, borderRadius: 4, border: "1px solid #ddd", background: "white", fontSize: 13 }}
+                        >
+                          <option value="READ">Viewer</option>
+                          <option value="EDIT">Editor</option>
+                        </select>
+                        <button onClick={() => removeShare(s.id)} style={{ background: "transparent", border: "none", color: "red", cursor: "pointer" }}>Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setShareModal(null)} style={{ marginTop: 16, padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white", cursor: "pointer" }}>Done</button>
+              </div>
             </div>
-            <button onClick={() => setMovePicker(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white", width: "100%" }}>Cancel</button>
-          </div>
-        </div>
-      )}
+          )
+        }
 
-    </div>
+
+        {/* CONTEXT MENU */}
+        {
+          menu && (
+            <div
+              ref={menuRef}
+              style={{
+                position: "fixed", top: menu.y, left: menu.x - 200, background: "white", border: "1px solid #ddd", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.1)", zIndex: 3000,
+                width: 200, display: "flex", flexDirection: "column"
+              }}
+            >
+              {menu.multi ? (
+                <>
+                  <div style={{ padding: "8px 12px", fontSize: 12, color: "#666", fontWeight: 600 }}>
+                    {selectedIds.size} Selected
+                  </div>
+                  <MenuDivider />
+                  <MenuItem label="Move to..." onClick={initiateMoveSelected} />
+                  <MenuItem label="Delete" danger onClick={deleteSelected} />
+                </>
+              ) : (
+                <>
+                  <MenuItem label="Select" onClick={() => {
+                    setSelectionMode(true);
+                    const key = `${menu.kind}:${menu.id}`;
+                    setSelectedIds(prev => {
+                      const next = new Set(prev);
+                      next.add(key);
+                      return next;
+                    });
+                    setMenu(null);
+                  }} />
+                  <MenuItem label="Open" onClick={() => {
+                    if (menu.kind === "folder") router.push(`/drive/f/${menu.id}`);
+                    else router.push(`/drive/file/${menu.id}`);
+                  }} />
+                  <MenuItem label="Rename" onClick={() => { if (menu.kind === "file") renameFile(menu.id); else renameFolder(menu.id); }} />
+                  <MenuItem label="Move to..." onClick={() => initiateMoveSingle(menu.kind, menu.id)} />
+                  <MenuDivider />
+                  <MenuItem label="Delete" danger onClick={() => { if (menu.kind === "file") deleteFile(menu.id); else deleteFolder(menu.id); }} />
+                  {menu.kind === "file" && <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.id}/download`} />}
+                </>
+              )}
+            </div>
+          )
+        }
+
+        {
+          movePicker && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ background: "white", padding: 20, borderRadius: 12, width: 400 }}>
+                <h3>Move {movePicker.display}</h3>
+                <div style={{ maxHeight: 300, overflow: "auto", margin: "10px 0" }}>
+                  <div onClick={() => performMove(null)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee", fontWeight: 600 }}>My Drive (Root)</div>
+                  {moveDestinations.map(f => (
+                    <div key={f.id} onClick={() => performMove(f.id)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee" }}>{f.name}</div>
+                  ))}
+                  {moveDestinations.length === 0 && <div style={{ padding: 10, opacity: 0.6 }}>No other folders</div>}
+                </div>
+                <button onClick={() => setMovePicker(null)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white", width: "100%" }}>Cancel</button>
+              </div>
+            </div>
+          )
+        }
+
+        {
+          previewFile && (
+            <MediaPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
+          )
+        }
+
+      </div >
+    </div >
   );
 }
 
