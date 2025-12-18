@@ -19,12 +19,7 @@ export async function GET(
   }
 
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,11 +33,40 @@ export async function GET(
 
   const file = await prisma.fileObject.findUnique({
     where: { id },
-    select: { id: true, name: true, mimeType: true, size: true, s3Key: true, ownerId: true },
+    select: { id: true, name: true, mimeType: true, size: true, s3Key: true, ownerId: true, folderId: true },
   });
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (file.ownerId !== user.id) {
+  // Check if user owns the file OR has access via shared folder
+  let hasAccess = file.ownerId === user.id;
+
+  if (!hasAccess && file.folderId) {
+    // Check if any parent folder is shared with the user
+    let currentFolderId: string | null = file.folderId;
+    while (currentFolderId && !hasAccess) {
+      const parentFolder: any = await prisma.folder.findUnique({
+        where: { id: currentFolderId },
+        select: {
+          ownerId: true,
+          parentId: true,
+          shares: {
+            where: { sharedWithUserId: user.id },
+            select: { id: true },
+          },
+        },
+      });
+
+      if (!parentFolder) break;
+
+      if (parentFolder.ownerId === user.id || parentFolder.shares.length > 0) {
+        hasAccess = true;
+      }
+
+      currentFolderId = parentFolder.parentId;
+    }
+  }
+
+  if (!hasAccess) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -7,12 +7,7 @@ export const dynamic = "force-dynamic";
 
 async function getUserIdFromReq(req: Request) {
   const token = await getToken({ req: req as any, secret: process.env.NEXTAUTH_SECRET });
-  let email = token?.email;
-
-  // DEV BYPASS
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = token?.email;
 
   if (!email) return null;
 
@@ -20,7 +15,6 @@ async function getUserIdFromReq(req: Request) {
     where: { email: String(email) },
     select: { id: true },
   });
-
   return user?.id ?? null;
 }
 
@@ -79,9 +73,38 @@ export async function PATCH(
 
   const body = await req.json().catch(() => ({}));
   const parentIdRaw = body?.parentId;
+  const nameRaw = body?.name;
 
-  const newParentId: string | null =
-    typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0 ? parentIdRaw : null;
+  const dataToUpdate: any = {};
+
+  // Defensive fix: Rename OR Move
+  if (typeof nameRaw === "string" && nameRaw.trim().length > 0) {
+    dataToUpdate.name = nameRaw.trim();
+  } else if (parentIdRaw !== undefined) {
+    const newParentId: string | null =
+      typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0 ? parentIdRaw : null;
+
+    dataToUpdate.parentId = newParentId;
+
+    if (newParentId) {
+      const dest = await prisma.folder.findFirst({
+        where: { id: newParentId, ownerId: userId },
+        select: { id: true },
+      });
+      if (!dest) return NextResponse.json({ error: "Invalid destination" }, { status: 400 });
+
+      if (await wouldCreateCycle(id, newParentId)) {
+        return NextResponse.json(
+          { error: "Cannot move folder into itself/descendant" },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  if (Object.keys(dataToUpdate).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
 
   const folder = await prisma.folder.findFirst({
     where: { id, ownerId: userId },
@@ -89,24 +112,9 @@ export async function PATCH(
   });
   if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (newParentId) {
-    const dest = await prisma.folder.findFirst({
-      where: { id: newParentId, ownerId: userId },
-      select: { id: true },
-    });
-    if (!dest) return NextResponse.json({ error: "Invalid destination" }, { status: 400 });
-
-    if (await wouldCreateCycle(id, newParentId)) {
-      return NextResponse.json(
-        { error: "Cannot move folder into itself/descendant" },
-        { status: 400 }
-      );
-    }
-  }
-
   const updated = await prisma.folder.update({
     where: { id },
-    data: { parentId: newParentId },
+    data: dataToUpdate,
     select: { id: true, name: true, parentId: true },
   });
 

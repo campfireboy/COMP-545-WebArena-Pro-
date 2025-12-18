@@ -13,12 +13,7 @@ const listQuerySchema = z.object({
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS: Allow access without login in development for testing
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -47,30 +42,73 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "User not found" }, { status: 401 });
   }
 
-  // Verify parent folder belongs to user (if not root)
+  // Helper function to check if user has access to a folder recursively
+  const hasAccessToFolder = async (folderId: string | null, userId: string): Promise<boolean> => {
+    if (folderId === null) return true; // Root is always accessible (as "My Drive")
+
+    let currentId: string | null = folderId;
+    while (currentId) {
+      const folder: any = await prisma.folder.findUnique({
+        where: { id: currentId },
+        select: {
+          ownerId: true,
+          parentId: true,
+          shares: {
+            where: { sharedWithUserId: userId },
+            select: { id: true },
+          },
+        },
+      });
+
+      if (!folder) return false;
+
+      // User owns this folder or it's shared with them
+      if (folder.ownerId === userId || folder.shares.length > 0) {
+        return true;
+      }
+
+      currentId = folder.parentId;
+    }
+
+    return false;
+  };
+
+  // Verify access
   if (parentId) {
-    const parent = await prisma.folder.findFirst({
-      where: { id: parentId, ownerId: user.id },
-      select: { id: true },
-    });
-    if (!parent) {
-      return NextResponse.json({ error: "Parent folder not found" }, { status: 404 });
+    const hasAccess = await hasAccessToFolder(parentId, user.id);
+    if (!hasAccess) {
+      // For "My Drive", if we don't own it and it's not shared recursively, we deny.
+      // Note: If accessing a shared folder, parentId will be that folder.
+      return NextResponse.json({ error: "Folder not found or access denied" }, { status: 404 });
     }
   }
 
-  const [folders, files] = await Promise.all([
+  let whereClauseFolders: any = { parentId };
+  let whereClauseFiles: any = { folderId: parentId };
+
+  if (parentId === null) {
+    // Root: Strict ownership (My Drive)
+    whereClauseFolders.ownerId = user.id;
+    whereClauseFiles.ownerId = user.id;
+  } else {
+    // Subfolder: Access verified recursively above. Return content.
+  }
+
+  const [allFolders, allFiles] = await Promise.all([
     prisma.folder.findMany({
-      where: { ownerId: user.id, parentId },
+      where: whereClauseFolders,
       orderBy: { createdAt: "asc" },
       select: {
         id: true,
         name: true,
         parentId: true,
         createdAt: true,
+        ownerId: true,
+        owner: { select: { id: true, name: true, email: true } },
       },
     }),
     prisma.fileObject.findMany({
-      where: { ownerId: user.id, folderId: parentId },
+      where: whereClauseFiles,
       orderBy: { createdAt: "asc" },
       select: {
         id: true,
@@ -79,14 +117,16 @@ export async function GET(req: Request) {
         mimeType: true,
         folderId: true,
         createdAt: true,
+        ownerId: true,
+        owner: { select: { id: true, name: true, email: true } },
       },
     }),
   ]);
 
   return NextResponse.json({
     parentId,
-    folders,
-    files,
+    folders: allFolders,
+    files: allFiles,
   });
 }
 
@@ -97,12 +137,7 @@ const createBodySchema = z.object({
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS: Allow access without login in development for testing
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

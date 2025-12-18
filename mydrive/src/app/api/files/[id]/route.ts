@@ -10,7 +10,8 @@ import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 export const runtime = "nodejs";
 
 const patchSchema = z.object({
-  folderId: z.string().nullable(),
+  folderId: z.string().nullable().optional(),
+  name: z.string().min(1).optional(),
 });
 
 type Ctx = { params: Promise<{ id: string }> | { id: string } };
@@ -26,12 +27,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -62,10 +58,10 @@ export async function PATCH(
   });
   if (!owned) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
-  const { folderId } = parsed.data;
+  const { folderId, name } = parsed.data;
 
   // If moving into a folder, confirm folder belongs to user
-  if (folderId) {
+  if (folderId !== undefined && folderId !== null) {
     const folder = await prisma.folder.findFirst({
       where: { id: folderId, ownerId: user.id },
       select: { id: true },
@@ -75,9 +71,19 @@ export async function PATCH(
     }
   }
 
+  // Defensive fix: Enforce Rename OR Move.
+  // The UI does not support doing both at once.
+  // This prevents accidental moves (folderId becoming null) during rename.
+  const dataToUpdate: any = {};
+  if (name !== undefined) {
+    dataToUpdate.name = name;
+  } else if (folderId !== undefined) {
+    dataToUpdate.folderId = folderId;
+  }
+
   const updated = await prisma.fileObject.update({
     where: { id: fileId },
-    data: { folderId },
+    data: dataToUpdate,
     select: {
       id: true,
       name: true,
@@ -96,12 +102,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

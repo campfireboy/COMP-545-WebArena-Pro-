@@ -3,87 +3,80 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
 export async function seedTestData() {
-  // Wipe data in a safe order (depends on your schema relations)
-  await prisma.share?.deleteMany().catch(() => {});
-  await prisma.fileObject?.deleteMany().catch(() => {});
-  await prisma.folder?.deleteMany().catch(() => {});
-  await prisma.user?.deleteMany().catch(() => {});
-  
+  // Find agent user if exists
+  const agentUser = await prisma.user.findUnique({
+    where: { email: "agent@test.com" },
+    select: { id: true },
+  });
+
+  // Delete only agent user's data
+  if (agentUser) {
+    await prisma.share.deleteMany({ where: { ownerId: agentUser.id } });
+    await prisma.fileObject.deleteMany({ where: { ownerId: agentUser.id } });
+    await prisma.folder.deleteMany({ where: { ownerId: agentUser.id } });
+    await prisma.user.delete({ where: { id: agentUser.id } }).catch(() => { });
+  }
+
 
 
   // Create dummy user
   //const passwordHash = await bcrypt.hash("password123", 10);
   function hashPassword(password: string) {
-  return crypto.createHash("sha256").update(password).digest("hex");
-}
+    return crypto.createHash("sha256").update(password).digest("hex");
+  }
 
 
   const user = await prisma.user.create({
-  data: {
-    email: "agent@test.com",
-    name: "Agent User",
-    password: hashPassword("password123"),
-  },
-});
+    data: {
+      email: "agent@test.com",
+      name: "Agent User",
+      password: hashPassword("password123"),
+    },
+  });
 
   // Root-level folders
-  const coursework = await prisma.folder.create({
-    data: { name: "Coursework", ownerId: user.id, parentId: null },
+  // Folder 1: "Input Material" - has 2 subfolders
+  const inputMaterial = await prisma.folder.create({
+    data: { name: "Input Material", ownerId: user.id, parentId: null },
   });
 
-  const ml = await prisma.folder.create({
-    data: { name: "ML Capstone", ownerId: user.id, parentId: null },
+  // Folder 2: "Research Notes" - has 1 subfolder
+  const researchNotes = await prisma.folder.create({
+    data: { name: "Research Notes", ownerId: user.id, parentId: null },
   });
 
-  const personal = await prisma.folder.create({
-    data: { name: "Personal Admin", ownerId: user.id, parentId: null },
+  // Folder 3: "Archive" - has no subfolders (leaf folder)
+  const archive = await prisma.folder.create({
+    data: { name: "Archive", ownerId: user.id, parentId: null },
   });
 
-  // Subfolders
-  const poli340 = await prisma.folder.create({
-    data: { name: "POLI 340", ownerId: user.id, parentId: coursework.id },
+  // Subfolders for Input Material (2 subfolders)
+  const rawData = await prisma.folder.create({
+    data: { name: "Raw Data", ownerId: user.id, parentId: inputMaterial.id },
   });
 
-  const comp545 = await prisma.folder.create({
-    data: { name: "COMP 545", ownerId: user.id, parentId: coursework.id },
+  const processedData = await prisma.folder.create({
+    data: { name: "Processed Data", ownerId: user.id, parentId: inputMaterial.id },
   });
 
-  const experiments = await prisma.folder.create({
-    data: { name: "Experiments", ownerId: user.id, parentId: ml.id },
+  // Subfolder for Research Notes (1 subfolder)
+  const literature = await prisma.folder.create({
+    data: { name: "Literature Review", ownerId: user.id, parentId: researchNotes.id },
   });
 
-  // Dummy files (DB records only — no S3 needed)
-  // If your FileObject model requires different fields, adjust these.
-  await prisma.fileObject.createMany({
-    data: [
-      {
-        name: "POLI340_essay_outline.docx",
-        ownerId: user.id,
-        folderId: poli340.id,
-        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        size: 142321,
-        s3Key: "dummy/poli340-outline.docx",
-      },
-      {
-        name: "a3_notes.txt",
-        ownerId: user.id,
-        folderId: comp545.id,
-        mimeType: "text/plain",
-        size: 4280,
-        s3Key: "dummy/a3-notes.txt",
-      },
-      {
-        name: "ablation_runs.csv",
-        ownerId: user.id,
-        folderId: experiments.id,
-        mimeType: "text/csv",
-        size: 91822,
-        s3Key: "dummy/ablation_runs.csv",
-      },
-    ],
-  });
-
-  return { userEmail: user.email };
+  // Return folder structure for use by reset API
+  return {
+    userEmail: user.email,
+    userId: user.id,
+    folders: {
+      inputMaterial: inputMaterial.id,
+      researchNotes: researchNotes.id,
+      archive: archive.id,
+      rawData: rawData.id,
+      processedData: processedData.id,
+      literature: literature.id,
+    }
+  };
 }
 
 async function main() {

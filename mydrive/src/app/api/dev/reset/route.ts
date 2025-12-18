@@ -4,10 +4,20 @@ import { NextResponse } from "next/server";
 import { seedTestData } from "../../../../../prisma/seed";
 
 export async function POST() {
-  // if (process.env.NODE_ENV !== "development") {
-  //   return NextResponse.json({ error: "Not allowed" }, { status: 403 });
-  // }
+  try {
+    // Just seed the database with folders
+    const seedResult = await seedTestData();
 
-  await seedTestData();
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      message: "Database reset successfully",
+      user: seedResult.userEmail
+    });
+  } catch (error) {
+    console.error("Reset error:", error);
+    return NextResponse.json({
+      error: "Reset failed",
+      details: error instanceof Error ? error.message : String(error)
+    }, { status: 500 });
+  }
 }

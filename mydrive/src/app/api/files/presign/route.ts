@@ -12,12 +12,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  let email = session?.user?.email;
-
-  // DEV BYPASS
-  if (!email && process.env.NODE_ENV === "development") {
-    email = "agent@test.com";
-  }
+  const email = session?.user?.email;
 
   if (!email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
