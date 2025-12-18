@@ -56,7 +56,7 @@ export async function PATCH(
 
   const file = await prisma.fileObject.findUnique({
     where: { id: fileId },
-    select: { id: true, ownerId: true, folderId: true },
+    select: { id: true, ownerId: true, folderId: true, name: true }, // Added name
   });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
@@ -94,11 +94,34 @@ export async function PATCH(
     }
   }
 
-  const dataToUpdate: any = {};
+  const dataToUpdate: any = {}; // Re-added initialization
   if (name !== undefined) dataToUpdate.name = name;
   if (folderId !== undefined) dataToUpdate.folderId = folderId;
   if (s3Key !== undefined) dataToUpdate.s3Key = s3Key;
   if (size !== undefined) dataToUpdate.size = size;
+
+  // --- NAME COLLISION CHECK ---
+  if (name !== undefined || folderId !== undefined) {
+    const targetName = name !== undefined ? name : file.name;
+    // For targetFolderId: if folderId is passed (even null), use it. Else use current.
+    // However, folderId in body can be explicitly null (to move to root).
+    const targetFolderId = folderId !== undefined ? folderId : file.folderId;
+
+    const existing = await prisma.fileObject.findFirst({
+      where: {
+        folderId: targetFolderId,
+        name: targetName,
+        ownerId: file.ownerId, // Check collision within owner's scope
+        NOT: { id: fileId }
+      },
+      select: { id: true }
+    });
+
+    if (existing) {
+      return NextResponse.json({ error: "A file with that name already exists" }, { status: 409 });
+    }
+  }
+  // ----------------------------
 
   const updated = await prisma.fileObject.update({
     where: { id: fileId },

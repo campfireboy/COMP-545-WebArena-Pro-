@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 import { authOptions } from "@/lib/authOptions";
 //This is the route.ts for presign
+import { getUniqueName } from "@/lib/serverUtils";
+
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email;
@@ -28,6 +30,7 @@ export async function POST(req: Request) {
 
   let fileOwnerId = user.id;
   let sharesToCreate: any[] = [];
+  let name = parsed.data.name;
 
   if (parsed.data.folderId) {
     const folder = await prisma.folder.findUnique({
@@ -60,9 +63,21 @@ export async function POST(req: Request) {
     }
   }
 
+  // --- UNIQUE NAME CHECK ---
+  const existingFiles = await prisma.fileObject.findMany({
+    where: {
+      folderId: parsed.data.folderId || null,
+      ownerId: fileOwnerId // Check against the owner's files in that folder
+    },
+    select: { name: true }
+  });
+  const existingNames = new Set(existingFiles.map(f => f.name));
+  name = getUniqueName(name, existingNames);
+  // -------------------------
+
   const file = await prisma.fileObject.create({
     data: {
-      name: parsed.data.name,
+      name: name,
       size: parsed.data.size,
       mimeType: parsed.data.mimeType,
       s3Key: parsed.data.s3Key,

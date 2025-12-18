@@ -203,9 +203,157 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   // Add Button Menu
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [codeMenuOpen, setCodeMenuOpen] = useState(false);
+
+  async function createFile(defaultName: string, content: string, mimeType: string, askForName: boolean = true) {
+    setAddMenuOpen(false);
+    setCodeMenuOpen(false);
+
+    let name = defaultName;
+    if (askForName) {
+      const input = prompt("Enter file name:", defaultName);
+      if (input === null) return; // Cancelled
+      if (!input.trim()) return; // Empty
+      name = input.trim();
+
+      // Ensure extension matches default if needed
+      const extIndex = defaultName.lastIndexOf(".");
+      if (extIndex !== -1) {
+        const ext = defaultName.substring(extIndex);
+        if (!name.endsWith(ext)) {
+          name = name + ext;
+        }
+      }
+    }
+
+    const res = await fetch("/api/files/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId: folderId ?? null, name, content, mimeType }),
+    });
+
+    if (res.ok) {
+      const newFile = await res.json();
+      // Redirect to the new file
+      router.push(`/drive/file/${newFile.id}`);
+    } else {
+      alert(`Failed to create ${name}`);
+    }
+  }
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // --- FOLDER UPLOAD LOGIC ---
+  async function handleFolderUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    setUploading(true);
+    setAddMenuOpen(false);
+    const files = e.target.files;
+    if (!files || files.length === 0) {
+      setUploading(false);
+      return;
+    }
+
+    // cache path -> folderId
+    const folderCache = new Map<string, string>();
+    if (folderId) folderCache.set("", folderId);
+
+    // Helper to ensure a folder exists
+    async function ensureFolder(path: string): Promise<string | null> {
+      if (folderCache.has(path)) return folderCache.get(path)!;
+      if (path === "") return folderId;
+
+      const parts = path.split("/");
+      const name = parts.pop()!;
+      const parentPath = parts.join("/");
+
+      const parentId = await ensureFolder(parentPath);
+
+      const res = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parentId }),
+      });
+
+      if (!res.ok) return null;
+      const folder = await res.json();
+      folderCache.set(path, folder.id);
+      return folder.id;
+    }
+
+    try {
+      // 1. Collect all unique folder paths
+      const pathsToCreate = new Set<string>();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const relPath = file.webkitRelativePath;
+        const lastSlash = relPath.lastIndexOf("/");
+        if (lastSlash !== -1) {
+          const dirPath = relPath.substring(0, lastSlash);
+          pathsToCreate.add(dirPath);
+        }
+      }
+
+      // 2. Sort paths by length so we create parents first
+      const sortedPaths = Array.from(pathsToCreate).sort();
+
+      // 3. Create folders
+      for (const path of sortedPaths) {
+        await ensureFolder(path);
+      }
+
+      // 4. Upload files
+      const promises = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const relPath = file.webkitRelativePath;
+        const lastSlash = relPath.lastIndexOf("/");
+        let targetFolderId = folderId;
+
+        if (lastSlash !== -1) {
+          const dirPath = relPath.substring(0, lastSlash);
+          targetFolderId = folderCache.get(dirPath) ?? folderId;
+        }
+
+        promises.push((async () => {
+          // Presign
+          const preRes = await fetch("/api/files/presign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", folderId: targetFolderId }),
+          });
+          if (!preRes.ok) return;
+          const { uploadUrl, s3Key } = await preRes.json();
+
+          // Upload S3
+          await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+
+          // Finalize
+          await fetch("/api/files/finalize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", s3Key, folderId: targetFolderId }),
+          });
+        })());
+
+        // Batch limit
+        if (promises.length >= 5) {
+          await Promise.all(promises);
+          promises.length = 0;
+        }
+      }
+      await Promise.all(promises);
+
+    } catch (e) {
+      console.error("Upload failed", e);
+      alert("Some files failed to upload");
+    } finally {
+      setUploading(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
+      load();
+    }
+  }
 
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string; name: string }[]>([]);
 
@@ -470,8 +618,10 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, type: "folder", name: newName.trim() }),
     });
-    if (!res.ok) alert("Failed to rename");
-    else await load();
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to rename");
+    } else await load();
   }
 
   async function renameFile(id: string) {
@@ -485,8 +635,10 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, type: "file", name: newName.trim() }),
     });
-    if (!res.ok) alert("Failed to rename");
-    else await load();
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to rename");
+    } else await load();
   }
 
   // --- MOVE LOGIC ---
@@ -693,15 +845,15 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     return null;
                   })()}
 
-                  {Array.from(selectedIds).some(id => id.startsWith("file:")) && (
+                  {selectedIds.size === 1 && (
                     <button
                       onClick={() => {
-                        const fileIds = Array.from(selectedIds).filter(id => id.startsWith("file:"));
-                        if (fileIds.length === 1) {
-                          const fid = fileIds[0].split(":")[1];
-                          window.location.href = `/api/files/${fid}/download`;
+                        const key = Array.from(selectedIds)[0];
+                        const [kind, id] = key.split(":");
+                        if (kind === "file") {
+                          window.location.href = `/api/files/${id}/download`;
                         } else {
-                          alert("Batch download not implemented yet.");
+                          window.location.href = `/api/folders/${id}/download`;
                         }
                       }}
                       title="Download"
@@ -899,53 +1051,128 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                 style={{
                   position: "absolute", bottom: 70, left: 0,
                   background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-                  width: 180, overflow: "hidden", border: "1px solid #ddd"
+                  width: 200, overflow: "hidden", border: "1px solid #ddd"
                 }}
               >
-                <button
-                  onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
-                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                >
-                  New Folder
-                </button>
-                <button
-                  onClick={async () => {
-                    setAddMenuOpen(false);
-                    const res = await fetch("/api/files/create", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ folderId: folderId ?? null }),
-                    });
-                    if (res.ok) await load();
-                    else alert("Failed to create document");
-                  }}
-                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                >
-                  New Document
-                </button>
-                <button
-                  onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
-                  style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                >
-                  File Upload
-                </button>
+                {!codeMenuOpen ? (
+                  <>
+                    <button
+                      onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      New Folder
+                    </button>
+                    <button
+                      onClick={() => createFile("Untitled Document.doc", JSON.stringify({ type: "doc", content: [] }), "application/vnd.google-apps.document")}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      New Document
+                    </button>
+                    <button
+                      onClick={() => createFile("Untitled Spreadsheet.csv", "", "text/csv")}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      New Spreadsheet
+                    </button>
+                    <button
+                      onClick={() => setCodeMenuOpen(true)}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                    >
+                      <span>Code File</span>
+                      <span style={{ fontSize: 10 }}>▶</span>
+                    </button>
+                    <button
+                      onClick={() => { setAddMenuOpen(false); folderInputRef.current?.click(); }}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      Folder Upload
+                    </button>
+                    <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
+                    <button
+                      onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
+                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                    >
+                      File Upload
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setCodeMenuOpen(false)}
+                      style={{ width: "100%", textAlign: "left", padding: "8px 16px", background: "#f8f9fa", border: "none", cursor: "pointer", fontWeight: 600, borderBottom: "1px solid #eee", color: "#555" }}
+                    >
+                      ◀ Back
+                    </button>
+                    {[
+                      { name: "Python", ext: "py", mime: "text/x-python" },
+                      { name: "Java", ext: "java", mime: "text/x-java-source" },
+                      { name: "JavaScript", ext: "js", mime: "application/javascript" },
+                      { name: "HTML", ext: "html", mime: "text/html" },
+                      { name: "CSS", ext: "css", mime: "text/css" },
+                      { name: "C++", ext: "cpp", mime: "text/x-c++src" },
+                      { name: "Text", ext: "txt", mime: "text/plain" },
+                    ].map(lang => (
+                      <button
+                        key={lang.ext}
+                        onClick={() => createFile(`Untitled.${lang.ext}`, "", lang.mime)}
+                        style={{ width: "100%", textAlign: "left", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 14 }}
+                      >
+                        {lang.name}
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
 
           {/* Hidden File Input */}
-          <input type="file" ref={fileInputRef} style={{ display: "none" }} onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) {
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            onChange={async (e) => {
               setUploading(true);
-              fetch("/api/files/presign", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, folderId: folderId ?? null }) })
-                .then(r => r.json())
-                .then(({ uploadUrl, s3Key }) => fetch(uploadUrl, { method: "PUT", body: f }).then(() => ({ s3Key })))
-                .then(({ s3Key }) => fetch("/api/files/finalize", { method: "POST", body: JSON.stringify({ name: f.name, size: f.size, mimeType: f.type, s3Key, folderId: folderId ?? null }) }))
-                .then(() => load())
-                .finally(() => setUploading(false));
-            }
-          }} />
+              setAddMenuOpen(false);
+              const files = e.target.files;
+              if (files) {
+                for (let i = 0; i < files.length; i++) {
+                  const file = files[i];
+                  // 1. Presign
+                  const preRes = await fetch("/api/files/presign", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", folderId: folderId ?? null }),
+                  });
+                  const { uploadUrl, s3Key, fileId: draftFileId } = await preRes.json();
+
+                  // 2. Upload S3
+                  await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+
+                  // 3. Finalize
+                  await fetch("/api/files/finalize", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", s3Key, folderId: folderId ?? null }),
+                  });
+                }
+                await load();
+              }
+              setUploading(false);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            // @ts-expect-error webkitdirectory is non-standard
+            webkitdirectory=""
+            directory=""
+            multiple
+            style={{ display: "none" }}
+            onChange={handleFolderUpload}
+          />
 
           {/* Overlay if Uploading */}
           {

@@ -6,6 +6,7 @@ import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
 import CodeEditor from "@/components/CodeEditor";
 import RichTextEditor from "@/components/RichTextEditor";
+import SpreadsheetEditor from "@/components/SpreadsheetEditor";
 
 type FileObject = {
     id: string;
@@ -22,7 +23,9 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
     const [file, setFile] = useState<FileObject | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-    const [editorType, setEditorType] = useState<"code" | "richtext" | null>(null);
+    const [editorType, setEditorType] = useState<"code" | "richtext" | "spreadsheet" | null>(null);
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState("");
 
     useEffect(() => {
         async function fetchFile() {
@@ -43,6 +46,8 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
                 // Determine Editor Type
                 if (name.endsWith(".doc")) {
                     setEditorType("richtext");
+                } else if (name.endsWith(".csv")) {
+                    setEditorType("spreadsheet");
                 } else {
                     setEditorType("code");
                 }
@@ -75,14 +80,91 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
         </div>
     );
 
+    const handleRename = async () => {
+        if (!file || !renameValue.trim() || renameValue.trim() === file.name) {
+            setIsRenaming(false);
+            return;
+        }
+
+        try {
+            const newName = renameValue.trim();
+            const res = await fetch(`/api/rename`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: file.id, type: "file", name: newName }),
+            });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                alert(data.error || "Failed to rename");
+                setIsRenaming(false);
+                setRenameValue(file.name);
+            } else {
+                setFile({ ...file, name: newName });
+                setIsRenaming(false);
+                // Optionally refresh metadata or history if needed
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Failed to rename");
+            setIsRenaming(false);
+        }
+    };
+
     return (
         <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
             <Sidebar activePage="drive" />
             <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                <Header title={`Editing: ${file.name}`} />
+                <Header title={
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                        <span style={{ marginRight: 8 }}>Editing:</span>
+                        {isRenaming ? (
+                            <input
+                                autoFocus
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onBlur={handleRename}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleRename();
+                                    if (e.key === "Escape") {
+                                        setIsRenaming(false);
+                                        setRenameValue(file.name);
+                                    }
+                                }}
+                                style={{
+                                    fontSize: 18,
+                                    padding: "4px 8px",
+                                    border: "1px solid #1a73e8",
+                                    borderRadius: 4,
+                                    outline: "none"
+                                }}
+                            />
+                        ) : (
+                            <span
+                                onDoubleClick={() => {
+                                    setRenameValue(file.name);
+                                    setIsRenaming(true);
+                                }}
+                                title="Double click to rename"
+                                style={{
+                                    cursor: "text",
+                                    padding: "4px 8px",
+                                    border: "1px solid transparent",
+                                    borderRadius: 4,
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.border = "1px solid #ddd"}
+                                onMouseLeave={(e) => e.currentTarget.style.border = "1px solid transparent"}
+                            >
+                                {file.name}
+                            </span>
+                        )}
+                    </div>
+                } />
                 <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 20, overflow: "hidden" }}>
                     {editorType === "richtext" ? (
                         <RichTextEditor fileId={fileId} initialFile={file} />
+                    ) : editorType === "spreadsheet" ? (
+                        <SpreadsheetEditor fileId={fileId} initialFile={file} />
                     ) : (
                         <CodeEditor fileId={fileId} initialFile={file} />
                     )}

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { s3 } from "@/lib/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
+import { getUniqueName } from "@/lib/serverUtils";
 
 export async function POST(req: NextRequest) {
     try {
@@ -13,42 +14,49 @@ export async function POST(req: NextRequest) {
         if (!session?.user?.id) return new NextResponse("Unauthorized", { status: 401 });
 
         const body = await req.json();
-        const { folderId } = body;
+        const { folderId, name: requestedName, content: requestedContent, mimeType: requestedMimeType } = body;
 
-        // 1. Determine Name
-        // Heuristic: Check how many "Untitled*.doc" exist
-        // For simplicity, we'll just use "Untitled Document.doc" or append timestamp if lazy, 
-        // but better to check existence. 
-        // Simpler: Just "Untitled Document " + UUID suffix short or similar if collision?
-        // Let's try to query DB for "Untitled Document.doc"
+        let name = requestedName || "Untitled.doc";
+        let contentString = "";
+        let mimeType = requestedMimeType || "application/json";
 
-        // Actually, user can rename later. Let's just create "Untitled.doc" and if exists "Untitled (1).doc"
-        // DB query for pattern matching might be heavy. 
-        // Let's just default to "Untitled.doc" and let DB constraints or user handle it?
-        // Drive usually allows duplicates.
+        if (name.endsWith(".doc") && !requestedContent) {
+            contentString = JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] });
+            mimeType = "application/vnd.google-apps.document";
+        } else {
+            contentString = requestedContent || "";
+            if (!requestedMimeType) {
+                if (name.endsWith(".csv")) mimeType = "text/csv";
+                else if (name.endsWith(".html")) mimeType = "text/html";
+                else mimeType = "text/plain";
+            }
+        }
 
-        let name = "Untitled.doc";
+        // --- UNIQUE NAME CHECK ---
+        const existingFiles = await prisma.fileObject.findMany({
+            where: {
+                folderId: folderId || null,
+                ownerId: session.user.id
+                // Note: We only check against files owned by user in that folder.
+                // ideally we check against all files visible in that folder,
+                // but for now strict ownership/folder context is okay.
+            },
+            select: { name: true }
+        });
+        const existingNames = new Set(existingFiles.map(f => f.name));
+        name = getUniqueName(name, existingNames);
+        // -------------------------
 
-        // 2. Initial Content (TipTap JSON)
-        const initialContent = {
-            type: "doc",
-            content: [
-                {
-                    type: "paragraph",
-                }
-            ]
-        };
-        const contentString = JSON.stringify(initialContent);
         const size = Buffer.byteLength(contentString);
 
         // 3. Upload to S3
-        const s3Key = `${session.user.id}/${uuidv4()}.doc`;
+        const s3Key = `${session.user.id}/${uuidv4()}${name.substring(name.lastIndexOf('.'))}`;
 
         await s3.send(new PutObjectCommand({
             Bucket: process.env.S3_BUCKET,
             Key: s3Key,
             Body: contentString,
-            ContentType: "application/json", // Storing as JSON
+            ContentType: mimeType,
         }));
 
         // 4. Create DB Record
@@ -56,7 +64,7 @@ export async function POST(req: NextRequest) {
             data: {
                 name,
                 size,
-                mimeType: "application/json", // Internal type
+                mimeType,
                 s3Key,
                 ownerId: session.user.id,
                 folderId: folderId || null,

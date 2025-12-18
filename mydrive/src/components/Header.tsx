@@ -2,7 +2,9 @@
 
 import { signOut, useSession } from "next-auth/react";
 
-export function Header({ title }: { title?: string }) {
+import { ReactNode } from "react";
+
+export function Header({ title }: { title?: ReactNode }) {
     const { data: session } = useSession();
 
     return (

@@ -81,7 +81,7 @@ export async function PATCH(
     // Check source folder permission
     const folder = await prisma.folder.findUnique({
       where: { id },
-      select: { id: true, ownerId: true, parentId: true },
+      select: { id: true, ownerId: true, parentId: true, name: true }, // Added name
     });
     if (!folder) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -108,6 +108,28 @@ export async function PATCH(
       typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0 ? parentIdRaw : null;
 
     dataToUpdate.parentId = newParentId;
+
+    // --- NAME COLLISION CHECK ---
+    const targetName = dataToUpdate.name || folder.name;
+    // For targetParentId, we use the new parentId if set (even if null), otherwise the old parentId.
+    // dataToUpdate.parentId handles explicit null or new ID. 
+    // If not in dataToUpdate, it means we are just renaming, so we stay in folder.parentId.
+    const targetParentId = "parentId" in dataToUpdate ? dataToUpdate.parentId : folder.parentId;
+
+    const existing = await prisma.folder.findFirst({
+      where: {
+        parentId: targetParentId,
+        name: targetName,
+        ownerId: userId, // Check collision within owner's scope
+        NOT: { id: id }
+      },
+      select: { id: true }
+    });
+
+    if (existing) {
+      return NextResponse.json({ error: "A folder with that name already exists" }, { status: 409 });
+    }
+    // ----------------------------
 
     if (newParentId) {
       // Check destination permission (Ownership OR Edit access)

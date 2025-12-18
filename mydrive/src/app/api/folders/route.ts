@@ -194,6 +194,8 @@ const createBodySchema = z.object({
   parentId: z.string().nullable().optional(),
 });
 
+import { getUniqueName } from "@/lib/serverUtils";
+
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email;
@@ -211,7 +213,8 @@ export async function POST(req: Request) {
     );
   }
 
-  const { name, parentId } = parsed.data;
+  // Use let so we can update it
+  let { name, parentId } = parsed.data;
 
   const user = await prisma.user.findUnique({
     where: { email },
@@ -241,9 +244,21 @@ export async function POST(req: Request) {
     }
   }
 
+  // --- UNIQUE NAME CHECK ---
+  const existingFolders = await prisma.folder.findMany({
+    where: {
+      parentId: parentId ?? null,
+      ownerId: newFolderOwnerId // Check against owner's folders
+    },
+    select: { name: true }
+  });
+  const existingNames = new Set(existingFolders.map(f => f.name));
+  name = getUniqueName(name.trim(), existingNames);
+  // -------------------------
+
   const created = await prisma.folder.create({
     data: {
-      name: name.trim(),
+      name: name,
       ownerId: newFolderOwnerId,
       parentId: parentId ?? null,
     },
