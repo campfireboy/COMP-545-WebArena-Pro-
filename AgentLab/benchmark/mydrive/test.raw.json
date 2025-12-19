@@ -1,46 +1,358 @@
 [
   {
-    "task_id": 0,
-    "intent": "Open the folder named coursework",
+    "task_id": 1,
+    "intent": "Delete 'file1.txt' from the root directory",
+    "start_url": "http://localhost:3000/agent1-login",
     "difficulty": "easy",
     "eval": {
-      "eval_types": [
-        "string_match"
-      ],
+      "type": "downloadsmatch",
+      "agent": "agent1",
       "reference_answers": {
-        "must_include": [
-          "POLI 340"
-        ]
-      }
-    }
-  },
-  {
-    "task_id": 1,
-    "intent": "Find the file named POLI340_essay_outline.docx inside a folder",
-    "difficulty": "medium",
-    "eval": {
-      "eval_types": [
-        "program_html"
-      ],
-      "reference_answers": {
-        "must_include": [
-          "POLI340_essay_outline.docx"
+        "directory_1": ".",
+        "directory_2": [
+          "file2.txt",
+          "file3.txt",
+          "file4.txt",
+          "file5.txt",
+          "file6.txt",
+          "file7.txt",
+          "file8.txt",
+          "file9.txt",
+          "file10.txt",
+          "folder1",
+          "folder2",
+          "folder3",
+          "folder4"
         ]
       }
     }
   },
   {
     "task_id": 2,
-    "start_url": "http://localhost:3000/login",
-    "intent": "Sign in with these credentials email agent@test.com password: password123",
-    "difficulty": "medium",
+    "intent": "Rename 'file2.txt' to 'renamed_file.txt' within the root directory.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "easy",
     "eval": {
-      "eval_types": [
-        "string_match"
-      ],
+      "type": "string_match",
+      "agent": "agent1",
       "reference_answers": {
         "must_include": [
-          "My Drive"
+          "renamed_file.txt"
+        ],
+        "must_not_include": [
+          "file2.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 3,
+    "intent": "Move 'file3.txt' from the root directory to 'folder1'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "easy",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "folder1",
+        "directory_2": [
+          "file3.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 5,
+    "intent": "Create a new folder named 'new_folder'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "easy",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "new_folder",
+        "directory_2": []
+      }
+    }
+  },
+  {
+    "task_id": 6,
+    "intent": "Search for 'file11.txt'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "easy",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "file11.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 7,
+    "intent": "Open 'folder3'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "easy",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "file11.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 8,
+    "intent": "Delete 'file4.txt', 'file5.txt', and 'file6.txt' from the root directory.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": ".",
+        "directory_2": [
+          "file1.txt",
+          "file2.txt",
+          "file3.txt",
+          "file7.txt",
+          "file8.txt",
+          "file9.txt",
+          "file10.txt",
+          "folder1",
+          "folder2",
+          "folder3",
+          "folder4"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 9,
+    "intent": "Move 'file7.txt', 'file8.txt', and 'file9.txt' from the root directory to 'folder2'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "folder2",
+        "directory_2": [
+          "file7.txt",
+          "file8.txt",
+          "file9.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 10,
+    "intent": "Create three folders named 'folderA', 'folderB', and 'folderC' in the root directory.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": ".",
+        "directory_2": [
+          "file1.txt",
+          "file2.txt",
+          "file3.txt",
+          "file4.txt",
+          "file5.txt",
+          "file6.txt",
+          "file7.txt",
+          "file8.txt",
+          "file9.txt",
+          "file10.txt",
+          "folder1",
+          "folder2",
+          "folder3",
+          "folder4",
+          "folderA",
+          "folderB",
+          "folderC"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 11,
+    "intent": "Open 'folder3' and create a file named 'new_file_in_folder3.txt'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "folder3",
+          "new_file_in_folder3.txt"
+        ],
+        "must_not_include": [
+          "folder1",
+          "folder2",
+          "folder4"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 12,
+    "intent": "Create a file named 'shared_doc.txt' and share it with 'agent2' giving them 'Editor' access. Important: Click 'Done' to close the share dialog.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "shared_doc.txt",
+          "agent2",
+          "Editor"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 13,
+    "intent": "Create a file named 'four_lines.txt' and write four lines of text in it: line 1 line2 line3 line 4.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "four_lines.txt",
+          "line 1",
+          "line 2",
+          "line 3",
+          "line 4"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 14,
+    "intent": "Create a folder named 'move_target' and move 'file10.txt' into it.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "medium",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "move_target",
+        "directory_2": [
+          "file10.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 15,
+    "intent": "Create two folders named 'dest1' and 'dest2'. Move 'file1.txt' into 'dest1' and 'file2.txt' into 'dest2'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "dest1",
+        "directory_2": [
+          "file1.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 16,
+    "intent": "Create a folder named 'outer'. Click to enter 'outer' and create a file named 'inner.txt'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "outer",
+        "directory_2": [
+          "inner.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 17,
+    "intent": "Navigate to 'folder3', delete 'file11.txt', then create a new file named 'replacement.txt' in that same folder.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "folder3",
+        "directory_2": [
+          "file12.txt",
+          "replacement.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 18,
+    "intent": "Create a folder named 'top'. Enter 'top' and create a folder named 'nested'. Go back to the root directory, select 'file3.txt', and move it into 'top/nested'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "top/nested",
+        "directory_2": [
+          "file3.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 19,
+    "intent": "Move 'file11.txt' from 'folder3' to 'folder4'.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "downloadsmatch",
+      "agent": "agent1",
+      "reference_answers": {
+        "directory_1": "folder4",
+        "directory_2": [
+          "file11.txt",
+          "file12.txt",
+          "file13.txt"
+        ]
+      }
+    }
+  },
+  {
+    "task_id": 20,
+    "intent": "Share 'file1.txt' with 'agent2' (Editor). Then sign out, and sign in as 'agent2@test2.com' (password: password123). Verify the file appears in 'Shared with me' by navigating there.",
+    "start_url": "http://localhost:3000/agent1-login",
+    "difficulty": "hard",
+    "eval": {
+      "type": "string_match",
+      "agent": "agent1",
+      "reference_answers": {
+        "must_include": [
+          "Shared with me",
+          "file1.txt"
+        ],
+        "must_not_include": [
+          "file2.txt",
+          "folder1"
         ]
       }
     }

@@ -27,9 +27,14 @@ class MyDriveBenchmark(Benchmark):
         max_steps: int = 30,
         headless: bool = True,
         slow_mo: int = 100,
+        task_file: str = "test.raw.json",
+        viewport: dict = None,
     ) -> None:
+        if viewport is None:
+            viewport = {"width": 1280, "height": 720}
+        
         # Load tasks from JSON
-        task_file = Path(__file__).parent / "test.raw.json"
+        task_file = Path(__file__).parent / task_file
         with open(task_file, "r", encoding="utf-8") as f:
             raw_tasks = json.load(f)
 
@@ -64,7 +69,7 @@ class MyDriveBenchmark(Benchmark):
                 max_steps=max_steps,
                 headless=headless,
                 slow_mo=slow_mo,
-                viewport={"width": 1280, "height": 720},
+                viewport=viewport,
                 record_video=False,
             )
             env_args_list.append(env_args)

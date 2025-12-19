@@ -1,0 +1,43 @@
+[
+    {
+        "task_id": 102,
+        "intent": "Agent1: create 'page', share to agent2, write 'Roses are red'. Agent2: refresh shared, open 'page', write 'violates are blue'.",
+        "start_url": "http://localhost:3000/agent1-login",
+        "eval": {
+            "type": "composite",
+            "operator": "AND",
+            "sub_tasks": [
+                {
+                    "intent": "Create a document named 'page'. Share it with username 'agent2' giving them 'Editor' access. Important: Click 'Done' to close the share dialog. Finally, open the document and write 'Roses are red'.",
+                    "agent": "agent1",
+                    "start_url": "http://localhost:3000",
+                    "eval": {
+                        "type": "string_match",
+                        "reference_answers": {
+                            "must_include": [
+                                "page",
+                                "Roses are red",
+                                "violates are blue"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "intent": "Navigate to the 'Shared with me' page. If you do not see a document named 'page', click the floating reload button (bottom left) to refresh the list until it appears. Once it appears, click on it and write 'violates are blue'",
+                    "agent": "agent2",
+                    "start_url": "http://localhost:3000",
+                    "eval": {
+                        "type": "string_match",
+                        "reference_answers": {
+                            "must_include": [
+                                "page",
+                                "Roses are red",
+                                "violates are blue"
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+]
