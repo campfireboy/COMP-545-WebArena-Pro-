@@ -3,6 +3,10 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import {
+    Folder, FileText, Image as ImageIcon, Music, Video,
+    MoreVertical, X, Search, Check, Download, Users, Share2, RefreshCw
+} from "lucide-react";
 
 import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
@@ -16,12 +20,13 @@ function MenuItem({ label, onClick, danger, icon }: { label: string, onClick: ()
             style={{
                 display: "flex", alignItems: "center", width: "100%", padding: "10px 16px",
                 border: "none", background: "transparent", cursor: "pointer",
-                color: danger ? "#d93025" : "#333", fontSize: 13, textAlign: "left"
+                color: danger ? "#d93025" : "#1f1f1f", fontSize: 14, textAlign: "left",
+                gap: 12
             }}
             onMouseEnter={e => e.currentTarget.style.background = "#f1f3f4"}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}
         >
-            {icon && <span style={{ marginRight: 12 }}>{icon}</span>}
+            {icon && <span>{icon}</span>}
             {label}
         </button>
     );
@@ -145,7 +150,7 @@ export default function SharedWithMePage() {
             router.push(`/shared-with-me/f/${item.folder.id}`);
         } else if (item.file) {
             const f = item.file;
-            if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(f.mimeType)) {
+            if (["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "audio/mpeg"].includes(f.mimeType)) {
                 setPreviewFile(f);
             } else {
                 router.push(`/drive/file/${f.id}`);
@@ -156,7 +161,7 @@ export default function SharedWithMePage() {
     return (
         <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
             <Header />
-            <div style={{ display: "flex", flex: 1 }}>
+            <div style={{ display: "flex", flex: 1, position: "relative" }}>
                 <Sidebar activePage="shared" />
 
                 <main
@@ -164,38 +169,55 @@ export default function SharedWithMePage() {
                     style={{ flex: 1, padding: 16, background: "white", position: "relative" }}
                 >
                     {/* Top Bar / Toolbar */}
-                    <div style={{ marginBottom: 16, height: 40, display: "flex", alignItems: "center" }}>
+                    <div style={{ marginBottom: 24 }}>
                         {selectionMode && selectedIds.size > 0 ? (
                             <div style={{
                                 display: "flex", alignItems: "center", gap: 16,
-                                background: "#e8f0fe", color: "#1967d2", padding: "8px 16px", borderRadius: 8, width: "100%",
+                                background: "#f8fafd", color: "#1f1f1f", padding: "8px 16px", borderRadius: 12, width: "100%",
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                                 animation: "fadeIn 0.2s"
                             }}>
-                                <button onClick={(e) => { e.stopPropagation(); clearSelection(); }} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "inherit", padding: 0 }}>✕</button>
-                                <span style={{ fontWeight: 600 }}>{selectedIds.size} selected</span>
+                                <button onClick={(e) => { e.stopPropagation(); clearSelection(); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#444746", display: "flex", alignItems: "center" }}><X size={20} /></button>
+                                <span style={{ fontWeight: 500 }}>{selectedIds.size} selected</span>
                                 <div style={{ flex: 1 }} />
                                 {/* Actions for shared items? Downloading only usually */}
-                                <button title="Download" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18 }} onClick={() => alert("Bulk download not implemented yet")}>⬇️</button>
+                                <button title="Download" style={{ background: "none", border: "none", cursor: "pointer", color: "#444746" }} onClick={() => alert("Bulk download not implemented yet")}><Download size={20} /></button>
                             </div>
                         ) : (
-                            <input
-                                placeholder="Search shared files..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                onFocus={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ width: "100%", padding: 8, border: "1px solid #ddd", borderRadius: 10 }}
-                            />
+                            <div style={{ marginBottom: 0, position: "relative" }} onClick={(e) => e.stopPropagation()}>
+                                <Search
+                                    size={20}
+                                    style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#444746" }}
+                                />
+                                <input
+                                    placeholder="Search shared files..."
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    style={{
+                                        width: "100%", padding: "12px 12px 12px 48px",
+                                        border: "none", borderRadius: 24,
+                                        background: "#e9eef6", fontSize: 16, transition: "background 0.2s, box-shadow 0.2s", color: "#1f1f1f"
+                                    }}
+                                    onFocus={(e) => {
+                                        e.target.style.background = "white";
+                                        e.target.style.boxShadow = "0 1px 2px rgba(0,0,0,0.3)";
+                                    }}
+                                    onBlur={(e) => {
+                                        e.target.style.background = "#e9eef6";
+                                        e.target.style.boxShadow = "none";
+                                    }}
+                                />
+                            </div>
                         )}
                     </div>
 
-                    <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 24px 0" }}>Shared with me</h1>
+                    <h1 style={{ fontSize: 22, fontWeight: 400, margin: "0 0 24px 0", color: "#444746" }}>Shared with me</h1>
 
                     {loading ? (
                         <div style={{ textAlign: "center", padding: 40, color: "#666" }}>Loading...</div>
                     ) : items.length === 0 ? (
-                        <div style={{ textAlign: "center", padding: 60, color: "#666", border: "1px dashed #ddd", borderRadius: 12 }}>
-                            <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
+                        <div style={{ textAlign: "center", padding: 60, color: "#444746", border: "1px dashed #c4c7c5", borderRadius: 12 }}>
+                            <div style={{ marginBottom: 16, display: "flex", justifyContent: "center" }}><Users size={48} color="#c4c7c5" /></div>
                             <div style={{ fontSize: 16 }}>No items shared with you</div>
                         </div>
                     ) : (
@@ -204,60 +226,54 @@ export default function SharedWithMePage() {
                             {/* SHARED FOLDERS */}
                             {sharedFolders.length > 0 && (
                                 <section>
-                                    <div style={{ fontWeight: 800, marginBottom: 12 }}>Folders</div>
-                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                                    <div style={{ fontWeight: 500, marginBottom: 12, color: "#444746" }}>Folders</div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
                                         {sharedFolders.map(item => {
                                             const isSelected = selectedIds.has(item.id);
                                             return (
                                                 <div key={item.id}
+                                                    data-testid={`shared-folder-${item.folder?.name}`}
                                                     onClick={(e) => {
                                                         if (selectionMode) handleSelectionClick(e, item.id);
                                                         else {
-                                                            // Logic for folders: Click usually opens? Or Selects?
-                                                            // DriveView: Single click selects, Double click opens.
-                                                            // We'll mimic DriveView Single Click logic if we want consistency, 
-                                                            // But here we rely on "selectionMode" toggle.
-                                                            // If NOT in selection mode, click -> Open (Simpler) or Double Click?
-                                                            // Let's do: Click -> Open for simplicity unless we want strict Drive parity.
-                                                            // Drive parity: Click selects (highlight), Double click opens.
-                                                            // I'll stick to: Click -> Open, unless Right Click -> Select.
                                                             openItem(item);
                                                         }
                                                     }}
                                                     onContextMenu={(e) => handleContextMenu(e, item)}
                                                     style={{
-                                                        border: "1px solid #eee", padding: 12, borderRadius: 12,
+                                                        border: "1px solid #c4c7c5", padding: 12, borderRadius: 12,
                                                         display: "flex", alignItems: "center", justifyContent: "space-between",
-                                                        cursor: "pointer", background: isSelected ? "#e8f0fe" : "white",
-                                                        borderColor: isSelected ? "#1a73e8" : "#eee",
+                                                        cursor: "pointer", background: isSelected ? "#c2e7ff" : "white",
+                                                        transition: "background 0.1s",
                                                         position: "relative"
                                                     }}
                                                     title={`Shared by ${item.owner.username || item.owner.name || item.owner.email}`}
                                                 >
-                                                    <div style={{ minWidth: 0 }}>
-                                                        <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                            {item.folder?.name}
-                                                        </div>
-                                                        <div style={{ fontSize: 12, opacity: 0.7 }}>
-                                                            Shared by {item.owner.username || item.owner.name || item.owner.email?.split('@')[0]}
+                                                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 12 }}>
+                                                        <div style={{ color: isSelected ? "#001d35" : "#444746" }}><Folder size={24} fill="currentColor" /></div>
+                                                        <div style={{ minWidth: 0 }}>
+                                                            <div style={{ fontWeight: 500, color: "#1f1f1f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                                {item.folder?.name}
+                                                            </div>
+                                                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>
+                                                                {item.owner.username || item.owner.name || item.owner.email?.split('@')[0]}
+                                                            </div>
                                                         </div>
                                                     </div>
 
-                                                    {selectionMode ? (
+                                                    {selectionMode && (
                                                         <div
                                                             onClick={(e) => handleSelectionClick(e, item.id)}
                                                             style={{
-                                                                width: 24, height: 24, borderRadius: 6,
-                                                                border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc",
-                                                                background: isSelected ? "#1a73e8" : "white",
+                                                                width: 24, height: 24, borderRadius: 12,
+                                                                border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                                                background: isSelected ? "#0b57d0" : "transparent",
                                                                 display: "flex", alignItems: "center", justifyContent: "center",
                                                                 zIndex: 10
                                                             }}
                                                         >
-                                                            {isSelected && <span style={{ color: "white", fontSize: 14 }}>✓</span>}
+                                                            {isSelected && <Check size={14} color="white" />}
                                                         </div>
-                                                    ) : (
-                                                        <div style={{ fontSize: 20 }}>📁</div>
                                                     )}
                                                 </div>
                                             );
@@ -269,57 +285,81 @@ export default function SharedWithMePage() {
                             {/* SHARED FILES */}
                             {sharedFiles.length > 0 && (
                                 <section>
-                                    <div style={{ fontWeight: 800, marginBottom: 12 }}>Files</div>
-                                    <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden" }}>
-                                        {sharedFiles.map(item => {
+                                    <div style={{ fontWeight: 500, marginBottom: 12, color: "#444746" }}>Files</div>
+                                    <div style={{ border: "1px solid #c4c7c5", borderRadius: 12, overflow: "hidden" }}>
+                                        {sharedFiles.map((item, index) => {
                                             const isSelected = selectedIds.has(item.id);
                                             return (
                                                 <div key={item.id}
+                                                    data-testid={`shared-file-${item.file?.name}`}
                                                     onClick={(e) => {
                                                         if (selectionMode) handleSelectionClick(e, item.id);
+                                                        else openItem(item);
                                                     }}
                                                     onDoubleClick={() => openItem(item)}
                                                     onContextMenu={(e) => handleContextMenu(e, item)}
                                                     style={{
-                                                        display: "flex", justifyContent: "space-between", padding: 12,
-                                                        borderBottom: "1px solid #f2f2f2", alignItems: "center",
-                                                        background: isSelected ? "#e8f0fe" : "white",
-                                                        cursor: "default"
+                                                        display: "flex", justifyContent: "space-between", padding: "10px 16px",
+                                                        borderBottom: index < sharedFiles.length - 1 ? "1px solid #f2f2f2" : "none", alignItems: "center",
+                                                        background: isSelected ? "#c2e7ff" : "white",
+                                                        cursor: "default",
+                                                        transition: "background 0.1s",
+                                                        // Ensure long filenames don't overflow
+                                                        maxWidth: "100%",
+                                                        flexWrap: "wrap",
+                                                        gap: 8
                                                     }}
                                                 >
-                                                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
-                                                        <div style={{ width: 40, height: 40, background: "#f1f3f4", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                                            {item.file?.mimeType.startsWith("image/") ? "🖼️" : item.file?.mimeType.startsWith("video/") ? "🎥" : "📄"}
+                                                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 16, flex: 1 }}>
+                                                        <div style={{ width: 32, height: 32, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}>
+                                                            {item.file?.mimeType.startsWith("image/") ? (
+                                                                // <ImageIcon size={24} /> 
+                                                                // Use thumbnail if possible
+                                                                // eslint-disable-next-line @next/next/no-img-element
+                                                                <img src={`/api/files/${item.file.id}/download`} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4 }} />
+                                                            ) : item.file?.mimeType.startsWith("video/") ? (
+                                                                <Video size={24} />
+                                                            ) : item.file?.mimeType.startsWith("audio/") ? (
+                                                                <Music size={24} />
+                                                            ) : (
+                                                                <FileText size={24} />
+                                                            )}
                                                         </div>
                                                         <div>
-                                                            <div style={{ fontWeight: 700 }}>{item.file?.name}</div>
-                                                            <div style={{ fontSize: 12, opacity: 0.7 }}>
-                                                                {item.file?.mimeType} • {item.file?.size ? Math.round(item.file.size / 1024) + " KB" : ""} • Shared by {item.owner.username || item.owner.name || item.owner.email?.split('@')[0]}
+                                                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                                <div style={{ fontWeight: 500, color: "#1f1f1f" }}>{item.file?.name}</div>
+                                                                <div style={{ flexShrink: 0 }}>
+                                                                    {selectionMode ? (
+                                                                        <div
+                                                                            onClick={(e) => handleSelectionClick(e, item.id)}
+                                                                            style={{
+                                                                                width: 48, height: 48, borderRadius: 24,
+                                                                                border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                                                                background: isSelected ? "#0b57d0" : "transparent",
+                                                                                display: "flex", alignItems: "center", justifyContent: "center",
+                                                                                cursor: "pointer"
+                                                                            }}
+                                                                        >
+                                                                            {isSelected && <Check size={14} color="white" />}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${item.file!.id}/download`; }}
+                                                                            style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                                                            title="Download"
+                                                                        >
+                                                                            <Download size={24} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>
+                                                                {item.file?.mimeType} • {item.file?.size ? Math.round(item.file.size / 1024) + " KB" : ""} • {item.owner.username || item.owner.name || item.owner.email?.split('@')[0]}
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    {selectionMode ? (
-                                                        <div
-                                                            onClick={(e) => handleSelectionClick(e, item.id)}
-                                                            style={{
-                                                                width: 24, height: 24, borderRadius: 6,
-                                                                border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc",
-                                                                background: isSelected ? "#1a73e8" : "white",
-                                                                display: "flex", alignItems: "center", justifyContent: "center",
-                                                                cursor: "pointer"
-                                                            }}
-                                                        >
-                                                            {isSelected && <span style={{ color: "white", fontSize: 14 }}>✓</span>}
-                                                        </div>
-                                                    ) : (
-                                                        <button
-                                                            onClick={(e) => { handleContextMenu(e, item); }}
-                                                            style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", marginLeft: 8 }}
-                                                        >
-                                                            ⋯
-                                                        </button>
-                                                    )}
+                                                    {/* Removed old button placement */}
                                                 </div>
                                             );
                                         })}
@@ -328,7 +368,7 @@ export default function SharedWithMePage() {
                             )}
 
                             {filteredItems.length === 0 && (
-                                <div style={{ opacity: 0.6 }}>No matching items</div>
+                                <div style={{ opacity: 0.6, padding: 16 }}>No matching items</div>
                             )}
                         </div>
                     )}
@@ -338,9 +378,12 @@ export default function SharedWithMePage() {
                         <div
                             ref={menuRef}
                             style={{
-                                position: "fixed", top: menu.y, left: menu.x - 200,
-                                background: "white", border: "1px solid #ddd", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.1)", zIndex: 3000,
-                                width: 200, display: "flex", flexDirection: "column"
+                                position: "fixed",
+                                // Boundary logic: ensure it fits on screen
+                                top: Math.min(menu.y, window.innerHeight - 200),
+                                left: Math.min(menu.x, window.innerWidth - 220),
+                                background: "white", border: "1px solid #c4c7c5", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.1)", zIndex: 3000,
+                                width: 200, display: "flex", flexDirection: "column", padding: "4px 0"
                             }}
                         >
                             {menu.multi ? (
@@ -351,16 +394,46 @@ export default function SharedWithMePage() {
                                 </>
                             ) : (
                                 <>
-                                    <MenuItem label="Select" onClick={() => toggleSelectionMode({ stopPropagation: () => { } } as any, menu.id)} />
-                                    <MenuItem label="Open" onClick={() => { if (menu.item) openItem(menu.item); setMenu(null); }} />
+                                    <MenuItem label="Select" onClick={() => toggleSelectionMode({ stopPropagation: () => { } } as any, menu.id)} icon={<Check size={16} />} />
+                                    <MenuItem label="Open" onClick={() => { if (menu.item) openItem(menu.item); setMenu(null); }} icon={<FileText size={16} />} />
                                     {menu.item?.file && (
-                                        <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.item!.file!.id}/download`} />
+                                        <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.item!.file!.id}/download`} icon={<Download size={16} />} />
                                     )}
                                 </>
                             )}
                         </div>
                     )}
                 </main>
+
+                <button
+                    data-testid="shared-reload-button"
+                    onClick={loadSharedItems}
+                    style={{
+                        position: "fixed",
+                        bottom: 30,
+                        left: 280, // Sidebar width (250ish) + padding
+                        width: 50,
+                        height: 50,
+                        borderRadius: 25,
+                        background: "white",
+                        color: "#444746",
+                        border: "1px solid #c4c7c5",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                        cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        zIndex: 200,
+                        transition: "background 0.2s"
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#f8f9fa"}
+                    onMouseLeave={e => e.currentTarget.style.background = "white"}
+                    title="Reload"
+                >
+                    <RefreshCw size={24} className={loading ? "spin" : ""} />
+                    {loading && <style>{`
+                        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                        .spin { animation: spin 1s linear infinite; }
+                    `}</style>}
+                </button>
 
                 {previewFile && (
                     <MediaPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />

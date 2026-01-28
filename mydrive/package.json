@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "websocket": "node ws-server.js"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -40,12 +41,15 @@
     "@tiptap/starter-kit": "^2.27.1",
     "@types/archiver": "^7.0.0",
     "@types/file-saver": "^2.0.7",
+    "@types/mime": "^3.0.4",
     "@types/papaparse": "^5.5.2",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "docx": "^9.5.1",
     "file-saver": "^2.0.5",
+    "lucide-react": "^0.561.0",
     "mathjs": "^15.1.0",
+    "mime": "^4.1.0",
     "next": "16.0.10",
     "next-auth": "^4.24.13",
     "papaparse": "^5.5.3",

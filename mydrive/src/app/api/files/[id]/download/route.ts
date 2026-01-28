@@ -83,6 +83,9 @@ export async function GET(
     return NextResponse.json({ error: "Missing object body" }, { status: 500 });
   }
 
+  /* 
+     Reverted: Streaming directly to browser.
+  */
   const nodeStream = obj.Body as unknown as Readable;
   const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream;
 

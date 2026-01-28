@@ -6,6 +6,12 @@ import { signOut, useSession } from "next-auth/react";
 import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
 import { MediaPreviewModal } from "@/components/MediaPreviewModal";
+import {
+  Folder as FolderIcon, FileText, Image as ImageIcon, Music, Video,
+  MoreVertical, X, Plus, Users, Download, Trash2, Edit2, ArrowRight,
+  ChevronRight, Search, ChevronDown, ChevronUp, File, Check, Share2
+} from "lucide-react";
+import { ShareModal, SharedItemPopover } from "@/components/ShareDialogs";
 
 type Folder = {
   id: string;
@@ -64,127 +70,7 @@ type Share = {
   permission: string;
 };
 
-const SharedItemPopover = ({
-  item,
-  onClose,
-  onShare,
-}: {
-  item: SharePopoverState;
-  onClose: () => void;
-  onShare: () => void;
-}) => {
-  const [shares, setShares] = useState<Share[]>([]);
-  const [loading, setLoading] = useState(true);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!item) return;
-    setLoading(true);
-    fetch(`/api/shares?${item.kind}Id=${item.id}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setShares(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [item]);
-
-  useEffect(() => {
-    function onMouseDown(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        if (!item?.targetRef.contains(e.target as Node)) {
-          onClose();
-        }
-      }
-    }
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [onClose, item]);
-
-  if (!item) return null;
-
-  const rect = item.targetRef.getBoundingClientRect();
-  const top = rect.bottom + window.scrollY + 8;
-  const left = Math.min(rect.left + window.scrollX, window.innerWidth - 320);
-
-  return (
-    <div
-      ref={popoverRef}
-      style={{
-        position: "absolute",
-        top,
-        left,
-        zIndex: 1000,
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        padding: 16,
-        width: 300,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-        <h3 style={{ margin: 0, fontSize: 14 }}>Access Details</h3>
-        <button
-          onClick={onClose}
-          style={{ border: "none", background: "none", cursor: "pointer", fontSize: 16, lineHeight: 1 }}
-        >
-          ✕
-        </button>
-      </div>
-
-      <div style={{ marginBottom: 12, fontSize: 13 }}>
-        <div style={{ fontWeight: 600 }}>Owner:</div>
-        <div>
-          {item.isOwned
-            ? "Me (You)"
-            : item.owner?.username
-              ? item.owner.name ? `${item.owner.username} (${item.owner.name})` : item.owner.username
-              : item.owner?.name || item.owner?.email || "Unknown"}
-        </div>
-      </div>
-
-      <div style={{ fontSize: 13, marginBottom: 16 }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>Shared with:</div>
-        {loading ? (
-          <div style={{ color: "#666" }}>Loading...</div>
-        ) : shares.length === 0 ? (
-          <div style={{ color: "#666" }}>Not shared</div>
-        ) : (
-          <div style={{ maxHeight: 100, overflow: "auto" }}>
-            {shares.map((s) => {
-              const display = s.sharedWithUser?.username || s.sharedWithUser?.name || s.sharedWithUser?.email || "Link";
-
-              return (
-                <div key={s.id} style={{ marginBottom: 4 }}>
-                  {display} ({s.permission})
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {item.isOwned && (
-        <button
-          onClick={onShare}
-          style={{
-            width: "100%",
-            padding: "8px",
-            background: "#e8f0fe",
-            color: "#1a73e8",
-            border: "none",
-            borderRadius: 4,
-            cursor: "pointer",
-            fontWeight: 500,
-          }}
-        >
-          Manage Sharing
-        </button>
-      )}
-    </div>
-  );
-};
 
 export default function DriveView({ folderId }: { folderId: string | null }) {
   const router = useRouter();
@@ -193,6 +79,11 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [files, setFiles] = useState<FileObject[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // File Creation Modal State
+  const [createFileModal, setCreateFileModal] = useState<{ defaultName: string, content: string, mimeType: string } | null>(null);
+  const [newFileNameInput, setNewFileNameInput] = useState("");
+
   const [search, setSearch] = useState("");
   // const [newFolderName, setNewFolderName] = useState(""); // Removed inline input
   const [uploading, setUploading] = useState(false);
@@ -205,41 +96,43 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [codeMenuOpen, setCodeMenuOpen] = useState(false);
 
-  async function createFile(defaultName: string, content: string, mimeType: string, askForName: boolean = true) {
+  function createFile(defaultName: string, content: string, mimeType: string) {
     setAddMenuOpen(false);
     setCodeMenuOpen(false);
+    setNewFileNameInput(defaultName);
+    setCreateFileModal({ defaultName, content, mimeType });
+  }
 
-    let name = defaultName;
-    if (askForName) {
-      const input = prompt("Enter file name:", defaultName);
-      if (input === null) return; // Cancelled
-      if (!input.trim()) return; // Empty
-      name = input.trim();
+  async function performCreateFile() {
+    if (!createFileModal) return;
+    const name = newFileNameInput.trim();
+    if (!name) return;
 
-      // Ensure extension matches default if needed
-      const extIndex = defaultName.lastIndexOf(".");
-      if (extIndex !== -1) {
-        const ext = defaultName.substring(extIndex);
-        if (!name.endsWith(ext)) {
-          name = name + ext;
-        }
+    // Ensure extension matches default if needed
+    let finalName = name;
+    const extIndex = createFileModal.defaultName.lastIndexOf(".");
+    if (extIndex !== -1) {
+      const ext = createFileModal.defaultName.substring(extIndex);
+      if (!finalName.endsWith(ext) && !finalName.endsWith(ext.toLowerCase())) {
+        finalName = finalName + ext;
       }
     }
 
     const res = await fetch("/api/files/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folderId: folderId ?? null, name, content, mimeType }),
+      body: JSON.stringify({ folderId: folderId ?? null, name: finalName, content: createFileModal.content, mimeType: createFileModal.mimeType }),
     });
 
     if (res.ok) {
       const newFile = await res.json();
-      // Redirect to the new file
       router.push(`/drive/file/${newFile.id}`);
     } else {
-      alert(`Failed to create ${name}`);
+      alert(`Failed to create ${finalName}`);
     }
+    setCreateFileModal(null);
   }
+
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -360,20 +253,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   // Share Modal & Popover
   const [shareModal, setShareModal] = useState<ShareModalState>(null);
   const [sharePopover, setSharePopover] = useState<SharePopoverState>(null);
-  const [shares, setShares] = useState<Share[]>([]);
-  const [shareEmail, setShareEmail] = useState("");
-  const [sharePermission, setSharePermission] = useState("READ");
-  const [loadingShares, setLoadingShares] = useState(false);
 
   // Unshare Check
   const [unshareModal, setUnshareModal] = useState<UnshareModalState>(null);
 
   const [movePicker, setMovePicker] = useState<null | { ids: string[]; display: string }>(null);
+  const [renameModal, setRenameModal] = useState<null | { id: string; type: "file" | "folder"; name: string }>(null);
   const [previewFile, setPreviewFile] = useState<FileObject | null>(null);
 
   async function deleteSelected() {
     setMenu(null);
-    if (!confirm(`Delete ${selectedIds.size} items?`)) return;
 
     for (const key of Array.from(selectedIds)) {
       const [kind, id] = key.split(":");
@@ -528,22 +417,42 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     setMenu({ kind, id, x: e.clientX, y: e.clientY, multi: newSelection.size > 1 });
   }
 
-  const filteredFolders = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return folders;
-    return folders.filter((f) => f.name.toLowerCase().includes(q));
-  }, [folders, search]);
+  // Search State
+  const [searchResults, setSearchResults] = useState<(FileObject | Folder)[] | null>(null);
 
-  const filteredFiles = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return files;
-    return files.filter((f) => f.name.toLowerCase().includes(q));
-  }, [files, search]);
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setSearchResults(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      const parentParam = folderId ? `&parentId=${encodeURIComponent(folderId)}` : "";
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}${parentParam}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.results);
+      }
+    }, 300); // Debounce
+
+    return () => clearTimeout(timer);
+  }, [search, folderId]);
+
+  const displayedFolders = useMemo(() => {
+    if (searchResults) return searchResults.filter(i => (i as any).kind === "folder") as Folder[];
+    return folders;
+  }, [folders, searchResults]);
+
+  const displayedFiles = useMemo(() => {
+    if (searchResults) return searchResults.filter(i => (i as any).kind === "file") as FileObject[];
+    return files;
+  }, [files, searchResults]);
 
   const sortedItems = useMemo(() => {
     const combined = [
-      ...filteredFolders.map(f => ({ ...f, kind: "folder" as const })),
-      ...filteredFiles.map(f => ({ ...f, kind: "file" as const }))
+      ...displayedFolders.map(f => ({ ...f, kind: "folder" as const })),
+      ...displayedFiles.map(f => ({ ...f, kind: "file" as const }))
     ];
 
     return combined.sort((a, b) => {
@@ -551,21 +460,20 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
       if (sortField === "name") {
         res = a.name.localeCompare(b.name);
       } else if (sortField === "type") {
-        // Folders first in 'type' sort usually, but let's strictly sort by type string
         const typeA = a.kind === "folder" ? "000_folder" : (a as FileObject).mimeType;
         const typeB = b.kind === "folder" ? "000_folder" : (b as FileObject).mimeType;
         res = typeA.localeCompare(typeB);
       }
       return sortDirection === "asc" ? res : -res;
     });
-  }, [filteredFolders, filteredFiles, sortField, sortDirection]);
+  }, [displayedFolders, displayedFiles, sortField, sortDirection]);
 
   const moveDestinations = useMemo(() => {
-    if (!movePicker) return filteredFolders;
+    if (!movePicker) return displayedFolders;
     // Exclude any folders that are currently being moved to avoid cycles/self-move
     const movingFolderIds = new Set(movePicker.ids.filter(id => id.startsWith("folder:")).map(id => id.split(":")[1]));
-    return filteredFolders.filter((f) => !movingFolderIds.has(f.id));
-  }, [filteredFolders, movePicker]);
+    return displayedFolders.filter((f) => !movingFolderIds.has(f.id));
+  }, [displayedFolders, movePicker]);
 
   function isOwned(item: { owner?: { email: string } }) {
     if (!session?.user?.email || !item.owner?.email) return false;
@@ -593,7 +501,6 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   async function deleteFolder(folderIdToDelete: string) {
     setMenu(null);
-    if (!confirm("Delete this folder and everything inside it?")) return;
     const res = await fetch(`/api/folders/${folderIdToDelete}`, { method: "DELETE" });
     if (!res.ok) alert("Failed to delete folder");
     else await load();
@@ -601,7 +508,6 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   async function deleteFile(fileId: string) {
     setMenu(null);
-    if (!confirm("Delete this file?")) return;
     const res = await fetch(`/api/files/${fileId}`, { method: "DELETE" });
     if (!res.ok) alert("Failed to delete file");
     else await load();
@@ -611,34 +517,34 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     setMenu(null);
     const folder = folders.find((f) => f.id === id);
     if (!folder) return;
-    const newName = prompt("New folder name:", folder.name);
-    if (!newName || !newName.trim() || newName === folder.name) return;
-    const res = await fetch(`/api/rename`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, type: "folder", name: newName.trim() }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || "Failed to rename");
-    } else await load();
+    setRenameModal({ id, type: "folder", name: folder.name });
   }
 
   async function renameFile(id: string) {
     setMenu(null);
     const file = files.find((f) => f.id === id);
     if (!file) return;
-    const newName = prompt("New file name:", file.name);
-    if (!newName || !newName.trim() || newName === file.name) return;
+    setRenameModal({ id, type: "file", name: file.name });
+  }
+
+  async function performRename() {
+    if (!renameModal) return;
+    const { id, type, name } = renameModal;
+    if (!name || !name.trim()) return;
+
     const res = await fetch(`/api/rename`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, type: "file", name: newName.trim() }),
+      body: JSON.stringify({ id, type, name: name.trim() }),
     });
+
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       alert(data.error || "Failed to rename");
-    } else await load();
+    } else {
+      await load();
+      setRenameModal(null);
+    }
   }
 
   // --- MOVE LOGIC ---
@@ -648,52 +554,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   // --- SHARING LOGIC ---
 
-  async function loadModalShares(kind: "file" | "folder", id: string) {
-    setLoadingShares(true);
-    const res = await fetch("/api/shares");
-    if (res.ok) {
-      const all = await res.json();
-      setShares(all.filter((s: any) => (kind === "file" ? s.fileId === id : s.folderId === id)));
-    }
-    setLoadingShares(false);
-  }
 
-  async function addShare() {
-    if (!shareModal || !shareEmail.trim()) return;
-    const res = await fetch("/api/shares", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        [shareModal.kind === "file" ? "fileId" : "folderId"]: shareModal.id,
-        sharedWithEmail: shareEmail.trim(),
-        permission: sharePermission,
-      }),
-    });
-    if (!res.ok) {
-      const msg = await res.json().catch(() => ({}));
-      alert(msg?.error || "Failed to share");
-      return;
-    }
-    setShareEmail("");
-    await loadModalShares(shareModal.kind, shareModal.id);
-  }
-
-  async function removeShare(shareId: string) {
-    if (!shareModal) return;
-    const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE" });
-    if (res.ok) await loadModalShares(shareModal.kind, shareModal.id);
-  }
-
-  async function updateSharePermission(shareId: string, newPermission: string) {
-    if (!shareModal) return;
-    const res = await fetch(`/api/shares/${shareId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permission: newPermission })
-    });
-    if (res.ok) await loadModalShares(shareModal.kind, shareModal.id);
-    else alert("Failed to update permission");
-  }
 
   // --- RENDER HELPERS ---
 
@@ -720,6 +581,8 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   }
 
 
+
+
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <Header />
@@ -732,38 +595,53 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
           style={{ flex: 1, padding: 16, position: "relative" }}
           onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }}
         >
-          {/* Top Bar */}
-          <div style={{ marginBottom: 16 }} onClick={(e) => e.stopPropagation()}>
-            <input
-              placeholder="Search..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: "100%", padding: 8, border: "1px solid #ddd", borderRadius: 10 }}
-            />
-          </div>
-
           {loading ? <div>Loading...</div> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {/* TOP SEARCH BAR */}
+              <div style={{ marginBottom: 0, position: "relative" }} onClick={(e) => e.stopPropagation()}>
+                <Search
+                  size={20}
+                  style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#444746" }}
+                />
+                <input
+                  placeholder="Search in Drive..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  style={{
+                    width: "100%", padding: "12px 12px 12px 48px",
+                    border: "none", borderRadius: 24,
+                    background: "#e9eef6", fontSize: 16, transition: "background 0.2s, box-shadow 0.2s", color: "#1f1f1f"
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.background = "white";
+                    e.target.style.boxShadow = "0 1px 2px rgba(0,0,0,0.3)";
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.background = "#e9eef6";
+                    e.target.style.boxShadow = "none";
+                  }}
+                />
+              </div>
               {/* BREADCRUMBS & SORT */}
               <div
                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, fontWeight: 600, color: "#5f6368" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, fontWeight: 600, color: "#444746" }}>
                   <span
                     onClick={() => router.push("/drive")}
-                    style={{ cursor: "pointer", color: breadcrumbs.length === 0 ? "#202124" : "inherit" }}
+                    style={{ cursor: "pointer", color: breadcrumbs.length === 0 ? "#1f1f1f" : "inherit" }}
                   >
                     My Drive
                   </span>
                   {breadcrumbs.map((b, i) => (
                     <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span>{'>'}</span>
+                      <ChevronRight size={16} color="#747775" />
                       <span
                         onClick={() => i < breadcrumbs.length - 1 ? router.push(`/drive/f/${b.id}`) : null}
                         style={{
                           cursor: i < breadcrumbs.length - 1 ? "pointer" : "default",
-                          color: i === breadcrumbs.length - 1 ? "#202124" : "inherit"
+                          color: i === breadcrumbs.length - 1 ? "#1f1f1f" : "inherit"
                         }}
                       >
                         {b.name}
@@ -774,23 +652,38 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
                 {/* SORT CONTROLS */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <select
-                    value={sortField}
-                    onChange={(e) => setSortField(e.target.value as any)}
-                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #ddd", background: "white", cursor: "pointer" }}
-                  >
-                    <option value="name">Name</option>
-                    <option value="type">Type</option>
-                  </select>
+                  <div style={{ position: "relative" }}>
+                    <select
+                      value={sortField}
+                      onChange={(e) => setSortField(e.target.value as any)}
+                      style={{
+                        padding: "8px 32px 8px 12px",
+                        borderRadius: 8,
+                        border: "1px solid #747775",
+                        background: "white",
+                        cursor: "pointer",
+                        fontSize: 14,
+                        color: "#444746",
+                        appearance: "none",
+                        fontWeight: 500
+                      }}
+                    >
+                      <option value="name">Name</option>
+                      <option value="type">Type</option>
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#444746" }} />
+                  </div>
                   <button
                     onClick={() => setSortDirection(prev => prev === "asc" ? "desc" : "asc")}
                     style={{
-                      width: 32, height: 32, borderRadius: 8, border: "1px solid #ddd", background: "white",
-                      display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer"
+                      width: 36, height: 36, borderRadius: 18, border: "none", background: "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#444746"
                     }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#f0f0f0"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     title={sortDirection === "asc" ? "Ascending" : "Descending"}
                   >
-                    {sortDirection === "asc" ? "↑" : "↓"}
+                    {sortDirection === "asc" ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                   </button>
                 </div>
               </div>
@@ -800,24 +693,25 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "8px 16px", background: "#f1f3f4", borderRadius: 8, marginBottom: 12,
-                  border: "1px solid #dadce0",
-                  opacity: selectedIds.size > 0 ? 1 : 0.5,
+                  padding: "8px 16px", background: "#f8fafd", borderRadius: 12, marginBottom: 16,
+                  border: "none",
+                  opacity: selectedIds.size > 0 ? 1 : 0,
                   pointerEvents: selectedIds.size > 0 ? "auto" : "none",
-                  transition: "opacity 0.2s"
+                  transition: "opacity 0.2s",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
                 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <button
                     onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }}
-                    style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18, color: "#5f6368", visibility: selectedIds.size > 0 ? "visible" : "hidden" }}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746", display: "flex", alignItems: "center" }}
                   >
-                    ✕
+                    <X size={20} />
                   </button>
-                  <span style={{ fontWeight: 600, color: "#202124" }}>
+                  <span style={{ fontWeight: 500, color: "#1f1f1f" }}>
                     {selectedIds.size > 0 ? `${selectedIds.size} selected` : "Select items..."}
                   </span>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 16 }}>
                   {selectedIds.size === 1 && (() => {
                     const key = Array.from(selectedIds)[0];
                     const [kind, id] = key.split(":");
@@ -828,16 +722,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                           <button
                             onClick={() => kind === "file" ? renameFile(id) : renameFolder(id)}
                             title="Rename"
-                            style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}
                           >
-                            ✏️
+                            <Edit2 size={20} />
                           </button>
                           <button
                             onClick={(e) => toggleSharePopover(e, kind as "folder" | "file", item)}
                             title="Share"
-                            style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}
                           >
-                            👥
+                            <Users size={20} />
                           </button>
                         </>
                       );
@@ -857,18 +751,22 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                         }
                       }}
                       title="Download"
-                      style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}
+                      style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}
                     >
-                      ⬇️
+                      <Download size={20} />
                     </button>
                   )}
-                  <button onClick={initiateMoveSelected} title="Move" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}>➡️</button>
-                  <button onClick={deleteSelected} title="Delete" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18 }}>🗑️</button>
+                  <button onClick={initiateMoveSelected} title="Move" aria-label="Move" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
+                    <ArrowRight size={20} />
+                  </button>
+                  <button onClick={deleteSelected} title="Delete" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
+                    <Trash2 size={20} />
+                  </button>
                 </div>
               </div>
 
               {/* UNIFIED LIST */}
-              <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden", userSelect: "none" }}>
+              <div style={{ border: "1px solid #c4c7c5", borderRadius: 12, overflow: "hidden", userSelect: "none" }}>
                 {sortedItems.map((item, index) => {
                   if (item.kind === "folder") {
                     const f = item as Folder;
@@ -877,63 +775,116 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     return (
                       <div key={`folder-${f.id}`}
                         onContextMenu={(e) => handleContextMenu(e, "folder", f.id)}
-                        onClick={(e) => handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems)}
+                        onClick={() => router.push(`/drive/f/${f.id}`)}
                         onDoubleClick={() => router.push(`/drive/f/${f.id}`)}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Folder: ${f.name}`}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/drive/f/${f.id}`); }}
                         style={{
-                          display: "flex", justifyContent: "space-between", padding: 12, borderBottom: "1px solid #f2f2f2", alignItems: "center",
+                          display: "flex", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f2f2f2", alignItems: "center",
                           cursor: "pointer",
-                          background: isSelected ? "#e8f0fe" : "white"
+                          background: isSelected ? "#c2e7ff" : "white",
+                          transition: "background 0.1s"
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1, minWidth: 0 }}>
                           {/* FOLDER THUMBNAIL */}
                           <div
                             style={{
-                              width: 40, height: 40, borderRadius: 8, overflow: "hidden",
-                              background: isSelected ? "#d2e3fc" : "#e8f0fe", display: "flex", alignItems: "center", justifyContent: "center",
-                              flexShrink: 0, fontSize: 20
+                              width: 32, height: 32,
+                              color: isSelected ? "#001d35" : "#444746", display: "flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0
                             }}
                           >
-                            📁
+                            <FolderIcon size={24} fill="currentColor" strokeWidth={1} />
                           </div>
 
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
-                            <div style={{ fontSize: 12, opacity: 0.7 }}>Folder {!owned ? `(Shared by ${f.owner?.username || f.owner?.name || f.owner?.email || "Unknown"})` : ""}</div>
-                          </div>
-                        </div>
-
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button
-                            onClick={(e) => toggleSharePopover(e, "folder", f)}
-                            style={{
-                              width: 34, height: 34, borderRadius: 10,
-                              border: "1px solid #ddd", background: "white",
-                              cursor: "pointer", fontSize: 16, flexShrink: 0,
-                              display: "flex", alignItems: "center", justifyContent: "center"
-                            }}
-                            title={owned ? "Share" : "Shared Details"}
-                          >
-                            👥
-                          </button>
-                          {selectionMode ? (
-                            <div
-                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems); }}
-                              style={{ width: 34, height: 34, borderRadius: 10, border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc", background: isSelected ? "#1a73e8" : "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                            >
-                              {isSelected && <span style={{ color: "white", fontSize: 18 }}>✓</span>}
+                          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div
+                                style={{ fontWeight: 500, color: "#1f1f1f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                              >
+                                {f.name}
+                              </div>
+                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "folder", f); }}
+                                  style={{
+                                    width: 48, height: 48, borderRadius: 24,
+                                    border: "none", background: "transparent",
+                                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                                    color: "#444746"
+                                  }}
+                                  title={owned ? "Share" : "Shared Details"}
+                                >
+                                  <Users size={24} />
+                                </button>
+                                {selectionMode ? (
+                                  <div
+                                    onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems); }}
+                                    style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}
+                                  >
+                                    <div style={{
+                                      width: 20, height: 20, borderRadius: 10,
+                                      border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                      background: isSelected ? "#0b57d0" : "transparent",
+                                      display: "flex", alignItems: "center", justifyContent: "center"
+                                    }}>
+                                      {isSelected && <Check size={14} color="white" />}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* Inline Actions */}
+                                    {owned ? (
+                                      <>
+                                        <button
+                                          aria-label="Rename"
+                                          onClick={(e) => { e.stopPropagation(); renameFolder(f.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                          title="Rename"
+                                        >
+                                          <Edit2 size={24} />
+                                        </button>
+                                        <button
+                                          aria-label="Move"
+                                          onClick={(e) => { e.stopPropagation(); initiateMoveSingle("folder", f.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                          title="Move"
+                                        >
+                                          <ArrowRight size={24} />
+                                        </button>
+                                        <button
+                                          aria-label="Delete"
+                                          onClick={(e) => { e.stopPropagation(); deleteFolder(f.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
+                                          title="Delete"
+                                        >
+                                          <Trash2 size={24} />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        aria-label="Open"
+                                        onClick={(e) => { e.stopPropagation(); router.push(`/drive/f/${f.id}`); }}
+                                        style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                        title="Open"
+                                      >
+                                        <ArrowRight size={24} />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </div>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                handleContextMenu(e, "folder", f.id);
-                              }}
-                              style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                            >
-                              ⋯
-                            </button>
-                          )}
+                            {/* @ts-expect-error path is dynamic */}
+                            {f.path && <div style={{ fontSize: 11, color: "#5e5e5e" }}>{f.path}</div>}
+                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>Folder {!owned ? `(Shared by ${f.owner?.username || f.owner?.name || f.owner?.email || "Unknown"})` : ""}</div>
+                          </div>
                         </div>
+
+                        {/* Spacer to replace old button area if needed, but flex justify-between handles spacing */}
                       </div>
                     );
                   } else {
@@ -943,7 +894,13 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     return (
                       <div key={`file-${file.id}`}
                         onContextMenu={(e) => handleContextMenu(e, "file", file.id)}
-                        onClick={(e) => handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems)}
+                        onClick={() => {
+                          if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType)) {
+                            setPreviewFile(file);
+                          } else {
+                            router.push(`/drive/file/${file.id}`);
+                          }
+                        }}
                         onDoubleClick={() => {
                           if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType)) {
                             setPreviewFile(file);
@@ -951,75 +908,130 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                             router.push(`/drive/file/${file.id}`);
                           }
                         }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`File: ${file.name}`}
                         style={{
-                          display: "flex", justifyContent: "space-between", padding: 12, borderBottom: "1px solid #f2f2f2", alignItems: "center",
-                          background: isSelected ? "#e8f0fe" : "white",
-                          cursor: "default"
+                          display: "flex", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f2f2f2", alignItems: "center",
+                          background: isSelected ? "#c2e7ff" : "white",
+                          cursor: "default",
+                          transition: "background 0.1s"
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1, minWidth: 0 }}>
                           {/* THUMBNAIL */}
                           <div
                             style={{
-                              width: 40, height: 40, borderRadius: 8, overflow: "hidden",
-                              background: isSelected ? "#d2e3fc" : "#f1f3f4", display: "flex", alignItems: "center", justifyContent: "center",
-                              flexShrink: 0
+                              width: 32, height: 32, borderRadius: 4, overflow: "hidden",
+                              background: isSelected ? "#c2e7ff" : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0, color: "#444746"
                             }}
                           >
-                            {file.mimeType === "image/jpeg" ? (
+                            {["image/jpeg", "image/png", "image/gif", "image/webp"].includes(file.mimeType) ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={`/api/files/${file.id}/download`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img src={`/api/files/${file.id}/download`} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4 }} />
                             ) : file.mimeType === "video/mp4" ? (
-                              <video src={`/api/files/${file.id}/download`} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                              <video src={`/api/files/${file.id}/download`} style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4 }} muted />
                             ) : file.mimeType === "audio/mpeg" ? (
-                              <span style={{ fontSize: 20 }}>📻</span>
+                              <Music size={24} />
                             ) : (
-                              <span style={{ fontSize: 20 }}>📄</span>
+                              <FileText size={24} />
                             )}
                           </div>
 
-                          <div style={{ minWidth: 0 }}>
-                            <div
-                              style={{ fontWeight: 700, cursor: ["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType) ? "pointer" : "default" }}
-                              title={["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType) ? "Double click to preview" : ""}
-                            >
-                              {item.name}
+
+                          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div
+                                style={{ fontWeight: 500, color: "#1f1f1f" }}
+                              >
+                                {item.name}
+                              </div>
+                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "file", file); }}
+                                  style={{
+                                    width: 48, height: 48, borderRadius: 24,
+                                    border: "none", background: "transparent",
+                                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746"
+                                  }}
+                                  title={owned ? "Share" : "Shared Details"}
+                                >
+                                  <Users size={24} />
+                                </button>
+                                {selectionMode ? (
+                                  <div
+                                    onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems); }}
+                                    style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}
+                                  >
+                                    <div style={{
+                                      width: 20, height: 20, borderRadius: 10,
+                                      border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                      background: isSelected ? "#0b57d0" : "transparent",
+                                      display: "flex", alignItems: "center", justifyContent: "center"
+                                    }}>
+                                      {isSelected && <Check size={14} color="white" />}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* Inline Actions */}
+                                    {owned ? (
+                                      <>
+                                        <button
+                                          aria-label="Rename"
+                                          onClick={(e) => { e.stopPropagation(); renameFile(file.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                          title="Rename"
+                                        >
+                                          <Edit2 size={24} />
+                                        </button>
+                                        <button
+                                          aria-label="Move"
+                                          onClick={(e) => { e.stopPropagation(); initiateMoveSingle("file", file.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                          title="Move"
+                                        >
+                                          <ArrowRight size={24} />
+                                        </button>
+                                        <button
+                                          aria-label="Download"
+                                          onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                          title="Download"
+                                        >
+                                          <Download size={24} />
+                                        </button>
+                                        <button
+                                          aria-label="Delete"
+                                          onClick={(e) => { e.stopPropagation(); deleteFile(file.id); }}
+                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
+                                          title="Delete"
+                                        >
+                                          <Trash2 size={24} />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        aria-label="Download"
+                                        onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
+                                        style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                        title="Download"
+                                      >
+                                        <Download size={24} />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </div>
-                            <div style={{ fontSize: 12, opacity: 0.7 }}>{file.mimeType} • {Math.round(file.size / 1024)} KB {!owned ? `(Shared by ${file.owner?.username || file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
+                            {/* @ts-expect-error path is dynamic */}
+                            {file.path && <div style={{ fontSize: 11, color: "#5e5e5e" }}>{file.path}</div>}
+                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>{file.mimeType} • {Math.round(file.size / 1024)} KB {!owned ? `(Shared by ${file.owner?.username || file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button
-                            onClick={(e) => toggleSharePopover(e, "file", file)}
-                            style={{
-                              width: 34, height: 34, borderRadius: 10,
-                              border: "1px solid #ddd", background: "white",
-                              cursor: "pointer", fontSize: 16, flexShrink: 0,
-                              display: "flex", alignItems: "center", justifyContent: "center"
-                            }}
-                            title={owned ? "Share" : "Shared Details"}
-                          >
-                            👥
-                          </button>
-                          {selectionMode ? (
-                            <div
-                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems); }}
-                              style={{ width: 34, height: 34, borderRadius: 10, border: "2px solid", borderColor: isSelected ? "#1a73e8" : "#ccc", background: isSelected ? "#1a73e8" : "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                            >
-                              {isSelected && <span style={{ color: "white", fontSize: 18 }}>✓</span>}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                handleContextMenu(e, "file", file.id);
-                              }}
-                              style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #ddd", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                            >
-                              ⋯
-                            </button>
-                          )}
-                        </div>
+                        {/* Space placeholder */}
                       </div>
                     );
                   }
@@ -1029,20 +1041,25 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
           )
           }
 
+
+
           {/* PLUS BUTTON */}
-          <div style={{ position: "fixed", bottom: 40, left: 272, zIndex: 1000 }}>
+          <div style={{ position: "fixed", bottom: 40, right: 40, zIndex: 1000 }}>
             <button
               ref={addBtnRef}
+              aria-label="New"
+              title="New"
               onClick={() => setAddMenuOpen(!addMenuOpen)}
               style={{
-                width: 56, height: 56, borderRadius: "50%",
-                background: "#1a73e8", color: "white",
-                border: "none", fontSize: 32, lineHeight: 1,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center"
+                width: 56, height: 56, borderRadius: 16,
+                background: "#c2e7ff", color: "#001d35",
+                border: "none",
+                boxShadow: "0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "box-shadow 0.08s linear, min-width 0.15s cubic-bezier(0.4,0.0,0.2,1)"
               }}
             >
-              +
+              <Plus size={24} strokeWidth={2.5} />
             </button>
 
             {addMenuOpen && (
@@ -1057,6 +1074,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                 {!codeMenuOpen ? (
                   <>
                     <button
+                      data-testid="new-folder-button"
                       onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
                       style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
                     >
@@ -1188,10 +1206,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
         {/* MODALS */}
         {
           createFolderModalOpen && (
-            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="new-folder-title"
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
               <div style={{ background: "white", padding: 24, borderRadius: 12, width: 320 }}>
-                <h3 style={{ marginTop: 0 }}>New Folder</h3>
+                <h3 id="new-folder-title" style={{ marginTop: 0 }}>New Folder</h3>
                 <input
+                  data-testid="new-folder-input"
                   autoFocus
                   placeholder="Folder name"
                   value={newFolderNameInput}
@@ -1201,64 +1225,78 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                 />
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                   <button onClick={() => setCreateFolderModalOpen(false)} style={{ padding: "8px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#1a73e8" }}>Cancel</button>
-                  <button onClick={createFolder} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}>Create</button>
+                  <button
+                    data-testid="new-folder-create-button"
+                    onClick={createFolder}
+                    style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}
+                  >
+                    Create
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+        {
+          createFileModal && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="new-file-title"
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <div style={{ background: "white", padding: 24, borderRadius: 12, width: 320 }}>
+                <h3 id="new-file-title" style={{ marginTop: 0 }}>New File</h3>
+                <input
+                  data-testid="new-file-input"
+                  autoFocus
+                  placeholder="File name"
+                  value={newFileNameInput}
+                  onChange={e => setNewFileNameInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && performCreateFile()}
+                  style={{ width: "100%", padding: 8, marginBottom: 16, border: "1px solid #ddd", borderRadius: 4 }}
+                />
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button onClick={() => setCreateFileModal(null)} style={{ padding: "8px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#1a73e8" }}>Cancel</button>
+                  <button
+                    data-testid="new-file-create-button"
+                    onClick={performCreateFile}
+                    style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}
+                  >
+                    Create
+                  </button>
                 </div>
               </div>
             </div>
           )
         }
 
-        <SharedItemPopover
-          item={sharePopover}
-          onClose={() => setSharePopover(null)}
-          onShare={() => {
-            if (sharePopover) {
-              setShareModal({ kind: sharePopover.kind, id: sharePopover.id, name: sharePopover.name });
-              setShareEmail("");
-              loadModalShares(sharePopover.kind, sharePopover.id);
-            }
-          }}
-        />
+        {sharePopover && (
+          <SharedItemPopover
+            kind={sharePopover.kind}
+            id={sharePopover.id}
+            name={sharePopover.name}
+            owner={sharePopover.owner}
+            isOwned={sharePopover.isOwned}
+            targetRef={sharePopover.targetRef}
+            onClose={() => setSharePopover(null)}
+            onManageSharing={() => {
+              if (sharePopover) {
+                setShareModal({ kind: sharePopover.kind, id: sharePopover.id, name: sharePopover.name });
+                // No need to load shares manually or clear email, internal component handles it
+              }
+            }}
+          />
+        )}
 
         {
           shareModal && (
-            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div style={{ background: "white", padding: 24, borderRadius: 12, width: 500, maxWidth: "90%" }}>
-                <h3>Share "{shareModal.name}"</h3>
-                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                  <input placeholder="Username or email" value={shareEmail} onChange={e => setShareEmail(e.target.value)} style={{ flex: 1, padding: 8, border: "1px solid #ddd", borderRadius: 8 }} />
-                  <select
-                    value={sharePermission}
-                    onChange={(e) => setSharePermission(e.target.value)}
-                    style={{ padding: 8, border: "1px solid #ddd", borderRadius: 8, background: "white" }}
-                  >
-                    <option value="READ">Viewer</option>
-                    <option value="EDIT">Editor</option>
-                  </select>
-                  <button onClick={addShare} style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 8, border: "none", cursor: "pointer" }}>Share</button>
-                </div>
-                <div>
-                  <h4 style={{ marginBottom: 8 }}>People with access</h4>
-                  {shares.map(s => (
-                    <div key={s.id} style={{ display: "flex", justifyContent: "space-between", margin: "4px 0", padding: 8, border: "1px solid #eee", borderRadius: 8, alignItems: "center" }}>
-                      <span>{s.sharedWithUser?.username || s.sharedWithUser?.name || s.sharedWithUser?.email}</span>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <select
-                          value={s.permission}
-                          onChange={(e) => updateSharePermission(s.id, e.target.value)}
-                          style={{ padding: 4, borderRadius: 4, border: "1px solid #ddd", background: "white", fontSize: 13 }}
-                        >
-                          <option value="READ">Viewer</option>
-                          <option value="EDIT">Editor</option>
-                        </select>
-                        <button onClick={() => removeShare(s.id)} style={{ background: "transparent", border: "none", color: "red", cursor: "pointer" }}>Remove</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <button onClick={() => setShareModal(null)} style={{ marginTop: 16, padding: "8px 16px", borderRadius: 8, border: "1px solid #ddd", background: "white", cursor: "pointer" }}>Done</button>
-              </div>
-            </div>
+            <ShareModal
+              kind={shareModal.kind}
+              id={shareModal.id}
+              name={shareModal.name}
+              onClose={() => setShareModal(null)}
+            />
           )
         }
 
@@ -1311,13 +1349,39 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
         {
           movePicker && (
-            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="move-item-title"
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
               <div style={{ background: "white", padding: 20, borderRadius: 12, width: 400 }}>
-                <h3>Move {movePicker.display}</h3>
+                <h3 id="move-item-title">Move {movePicker.display}</h3>
                 <div style={{ maxHeight: 300, overflow: "auto", margin: "10px 0" }}>
-                  <div onClick={() => performMove(null)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee", fontWeight: 600 }}>My Drive (Root)</div>
+                  <div
+                    data-testid="move-destination-root"
+                    onClick={() => performMove(null)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Move to Root"
+                    onKeyDown={e => e.key === "Enter" && performMove(null)}
+                    style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee", fontWeight: 600 }}
+                  >
+                    My Drive (Root)
+                  </div>
                   {moveDestinations.map(f => (
-                    <div key={f.id} onClick={() => performMove(f.id)} style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee" }}>{f.name}</div>
+                    <div
+                      key={f.id}
+                      data-testid={`move-destination-${f.id}`}
+                      onClick={() => performMove(f.id)}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Move to ${f.name}`}
+                      onKeyDown={e => e.key === "Enter" && performMove(f.id)}
+                      style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee" }}
+                    >
+                      {f.name}
+                    </div>
                   ))}
                   {moveDestinations.length === 0 && <div style={{ padding: 10, opacity: 0.6 }}>No other folders</div>}
                 </div>
@@ -1334,6 +1398,41 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
         }
 
       </div >
+      {/* RENAME MODAL */}
+      {renameModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 6000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-title"
+            data-testid="rename-modal"
+            style={{ background: "white", padding: 24, borderRadius: 12, width: 320 }}>
+            <h3 id="rename-title" style={{ marginTop: 0 }}>Rename</h3>
+            <input
+              autoFocus
+              data-testid="rename-input"
+              value={renameModal.name}
+              onChange={e => setRenameModal({ ...renameModal, name: e.target.value })}
+              onKeyDown={e => e.key === "Enter" && performRename()}
+              style={{ width: "100%", padding: 8, marginBottom: 16, border: "1px solid #ddd", borderRadius: 4 }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                data-testid="rename-cancel"
+                onClick={() => setRenameModal(null)}
+                style={{ padding: "8px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#1a73e8" }}>
+                Cancel
+              </button>
+              <button
+                data-testid="rename-ok"
+                onClick={performRename}
+                style={{ padding: "8px 16px", background: "#1a73e8", color: "white", borderRadius: 4, border: "none", cursor: "pointer" }}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 }

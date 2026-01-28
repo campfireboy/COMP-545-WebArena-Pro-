@@ -124,7 +124,7 @@ export async function GET(
   return new NextResponse(stream as any, {
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${folder.name}.zip"`,
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(folder.name)}.zip"`,
     },
   });
 }

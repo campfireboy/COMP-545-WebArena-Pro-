@@ -1,93 +1,155 @@
 import { prisma } from "../src/lib/db";
-import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import mime from "mime";
+
+// Initialize S3 Client locally for seeding
+const s3 = new S3Client({
+  region: process.env.S3_REGION!,
+  endpoint: process.env.S3_ENDPOINT!,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY!,
+    secretAccessKey: process.env.S3_SECRET_KEY!,
+  },
+  forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+});
+
+function hashPassword(password: string) {
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
 
 export async function seedTestData() {
-  // Find agent user if exists
-  const agentUser = await prisma.user.findUnique({
-    where: { email: "agent@test.com" },
-    select: { id: true },
-  });
+  const inputMaterialsPath = path.join(process.cwd(), "InputMaterials");
 
-  // Delete only agent user's data
-  if (agentUser) {
-    await prisma.share.deleteMany({ where: { ownerId: agentUser.id } });
-    await prisma.fileObject.deleteMany({ where: { ownerId: agentUser.id } });
-    await prisma.folder.deleteMany({ where: { ownerId: agentUser.id } });
-    await prisma.user.delete({ where: { id: agentUser.id } }).catch(() => { });
+  if (!fs.existsSync(inputMaterialsPath)) {
+    console.log("No InputMaterials directory found, creating default.");
+    fs.mkdirSync(inputMaterialsPath, { recursive: true });
+    // create d1/d2 for demo if empty? keeping it simple for now.
   }
 
+  // Get directories d1, d2, ...
+  const entries = fs.readdirSync(inputMaterialsPath, { withFileTypes: true });
+  const agentDirs = entries
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => dirent.name)
+    .sort(); // d1, d2... (alphanumeric sort)
 
+  console.log(`Found agent directories: ${agentDirs.join(", ")}`);
 
-  // Create dummy user
-  //const passwordHash = await bcrypt.hash("password123", 10);
-  function hashPassword(password: string) {
-    return crypto.createHash("sha256").update(password).digest("hex");
-  }
+  const createdUsers = [];
 
+  for (let i = 0; i < agentDirs.length; i++) {
+    const dirName = agentDirs[i];
+    const agentIndex = i + 1; // 1-based index
+    const email = `agent${agentIndex}@test${agentIndex}.com`;
+    const username = `agent${agentIndex}`;
+    const name = `Agent${agentIndex} Test${agentIndex}`;
 
-  const user = await prisma.user.create({
-    data: {
-      email: "agent@test.com",
-      name: "Agent User",
-      username: "agent123",
-      password: hashPassword("password123"),
-    },
-  });
+    console.log(`Processing ${username} (${email}) from ${dirName}...`);
 
-  // Root-level folders
-  // Folder 1: "Input Material" - has 2 subfolders
-  const inputMaterial = await prisma.folder.create({
-    data: { name: "Input Material", ownerId: user.id, parentId: null },
-  });
+    // 1. Cleanup existing user
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true }
+    });
 
-  // Folder 2: "Research Notes" - has 1 subfolder
-  const researchNotes = await prisma.folder.create({
-    data: { name: "Research Notes", ownerId: user.id, parentId: null },
-  });
-
-  // Folder 3: "Archive" - has no subfolders (leaf folder)
-  const archive = await prisma.folder.create({
-    data: { name: "Archive", ownerId: user.id, parentId: null },
-  });
-
-  // Subfolders for Input Material (2 subfolders)
-  const rawData = await prisma.folder.create({
-    data: { name: "Raw Data", ownerId: user.id, parentId: inputMaterial.id },
-  });
-
-  const processedData = await prisma.folder.create({
-    data: { name: "Processed Data", ownerId: user.id, parentId: inputMaterial.id },
-  });
-
-  // Subfolder for Research Notes (1 subfolder)
-  const literature = await prisma.folder.create({
-    data: { name: "Literature Review", ownerId: user.id, parentId: researchNotes.id },
-  });
-
-  // Return folder structure for use by reset API
-  return {
-    userEmail: user.email,
-    userId: user.id,
-    folders: {
-      inputMaterial: inputMaterial.id,
-      researchNotes: researchNotes.id,
-      archive: archive.id,
-      rawData: rawData.id,
-      processedData: processedData.id,
-      literature: literature.id,
+    if (existingUser) {
+      console.log(`Deleting existing user ${existingUser.id}...`);
+      await prisma.share.deleteMany({ where: { ownerId: existingUser.id } });
+      await prisma.share.deleteMany({ where: { sharedWithUserId: existingUser.id } });
+      await prisma.fileObject.deleteMany({ where: { ownerId: existingUser.id } });
+      await prisma.folder.deleteMany({ where: { ownerId: existingUser.id } });
+      const deleted = await prisma.user.deleteMany({ where: { email } });
+      console.log(`Deleted user count: ${deleted.count}`);
     }
+
+    // 2. Create User
+    const user = await prisma.user.create({
+      data: {
+        email,
+        username,
+        id: `user-${username}`,
+        name,
+        password: hashPassword("password123"),
+      },
+    });
+    console.log(`[DEBUG] Seeded user: ${user.username} with ID: ${user.id}`);
+    createdUsers.push(user);
+
+    // 3. Upload Content
+    const agentRootPath = path.join(inputMaterialsPath, dirName);
+    if (fs.existsSync(agentRootPath)) {
+      console.log(`Uploading content from ${agentRootPath}...`);
+      await uploadRecursive(agentRootPath, null, user.id);
+    }
+  }
+
+  return {
+    message: "Seeding complete",
+    users: createdUsers.map(u => ({ email: u.email, id: u.id }))
   };
 }
+
+// Helper to upload recursive
+async function uploadRecursive(currentFsPath: string, parentFolderId: string | null, userId: string) {
+  const items = fs.readdirSync(currentFsPath, { withFileTypes: true });
+  for (const item of items) {
+    const itemPath = path.join(currentFsPath, item.name);
+    if (item.isDirectory()) {
+      const folder = await prisma.folder.create({
+        data: { name: item.name, ownerId: userId, parentId: parentFolderId }
+      });
+      await uploadRecursive(itemPath, folder.id, userId);
+    } else {
+      const content = fs.readFileSync(itemPath);
+      await uploadFile(userId, parentFolderId, item.name, content);
+    }
+  }
+}
+
+// Helper to create text file
+async function createTextFile(userId: string, folderId: string | null, name: string, content: string) {
+  await uploadFile(userId, folderId, name, Buffer.from(content));
+}
+
+// Helper to upload file to S3 and DB
+async function uploadFile(userId: string, folderId: string | null, name: string, content: Buffer) {
+  const s3Key = `${userId}/${crypto.randomUUID()}-${name}`;
+  const mimeType = mime.getType(name) || "application/octet-stream";
+
+  await s3.send(new PutObjectCommand({
+    Bucket: process.env.S3_BUCKET!,
+    Key: s3Key,
+    Body: content,
+    ContentType: mimeType
+  }));
+
+  await prisma.fileObject.create({
+    data: {
+      name,
+      size: content.length,
+      mimeType,
+      s3Key,
+      ownerId: userId,
+      folderId
+    }
+  });
+}
+
+
 
 async function main() {
   await seedTestData();
 }
 
-main()
-  .then(async () => prisma.$disconnect())
-  .catch(async (e) => {
-    console.error(e);
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+if (require.main === module) {
+  main()
+    .then(async () => prisma.$disconnect())
+    .catch(async (e) => {
+      console.error(e);
+      await prisma.$disconnect();
+      process.exit(1);
+    });
+}

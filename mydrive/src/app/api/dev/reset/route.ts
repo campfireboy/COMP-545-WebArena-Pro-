@@ -11,7 +11,7 @@ export async function POST() {
     return NextResponse.json({
       ok: true,
       message: "Database reset successfully",
-      user: seedResult.userEmail
+      users: seedResult.users
     });
   } catch (error) {
     console.error("Reset error:", error);

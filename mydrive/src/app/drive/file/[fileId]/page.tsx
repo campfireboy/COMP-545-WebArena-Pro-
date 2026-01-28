@@ -7,6 +7,8 @@ import { Sidebar } from "@/components/Sidebar";
 import CodeEditor from "@/components/CodeEditor";
 import RichTextEditor from "@/components/RichTextEditor";
 import SpreadsheetEditor from "@/components/SpreadsheetEditor";
+import { ShareModal } from "@/components/ShareDialogs";
+import { Users } from "lucide-react";
 
 type FileObject = {
     id: string;
@@ -26,6 +28,7 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
     const [editorType, setEditorType] = useState<"code" | "richtext" | "spreadsheet" | null>(null);
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState("");
+    const [shareModalOpen, setShareModalOpen] = useState(false);
 
     useEffect(() => {
         async function fetchFile() {
@@ -115,51 +118,75 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
         <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
             <Sidebar activePage="drive" />
             <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                <Header title={
-                    <div style={{ display: "flex", alignItems: "center" }}>
-                        <span style={{ marginRight: 8 }}>Editing:</span>
-                        {isRenaming ? (
-                            <input
-                                autoFocus
-                                value={renameValue}
-                                onChange={(e) => setRenameValue(e.target.value)}
-                                onBlur={handleRename}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleRename();
-                                    if (e.key === "Escape") {
-                                        setIsRenaming(false);
+                <Header
+                    title={
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                            <span style={{ marginRight: 8 }}>Editing:</span>
+                            {isRenaming ? (
+                                <input
+                                    autoFocus
+                                    value={renameValue}
+                                    onChange={(e) => setRenameValue(e.target.value)}
+                                    onBlur={handleRename}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") handleRename();
+                                        if (e.key === "Escape") {
+                                            setIsRenaming(false);
+                                            setRenameValue(file.name);
+                                        }
+                                    }}
+                                    style={{
+                                        fontSize: 18,
+                                        padding: "4px 8px",
+                                        border: "1px solid #1a73e8",
+                                        borderRadius: 4,
+                                        outline: "none"
+                                    }}
+                                />
+                            ) : (
+                                <span
+                                    onDoubleClick={() => {
                                         setRenameValue(file.name);
-                                    }
-                                }}
-                                style={{
-                                    fontSize: 18,
-                                    padding: "4px 8px",
-                                    border: "1px solid #1a73e8",
-                                    borderRadius: 4,
-                                    outline: "none"
-                                }}
-                            />
-                        ) : (
-                            <span
-                                onDoubleClick={() => {
-                                    setRenameValue(file.name);
-                                    setIsRenaming(true);
-                                }}
-                                title="Double click to rename"
-                                style={{
-                                    cursor: "text",
-                                    padding: "4px 8px",
-                                    border: "1px solid transparent",
-                                    borderRadius: 4,
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.border = "1px solid #ddd"}
-                                onMouseLeave={(e) => e.currentTarget.style.border = "1px solid transparent"}
-                            >
-                                {file.name}
-                            </span>
-                        )}
-                    </div>
-                } />
+                                        setIsRenaming(true);
+                                    }}
+                                    title="Double click to rename"
+                                    style={{
+                                        cursor: "text",
+                                        padding: "4px 8px",
+                                        border: "1px solid transparent",
+                                        borderRadius: 4,
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.border = "1px solid #ddd"}
+                                    onMouseLeave={(e) => e.currentTarget.style.border = "1px solid transparent"}
+                                >
+                                    {file.name}
+                                </span>
+                            )}
+                        </div>
+                    }
+                    actions={
+                        <button
+                            data-testid="editor-share-button"
+                            onClick={() => setShareModalOpen(true)}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "8px 16px",
+                                background: "#c2e7ff",
+                                color: "#001d35",
+                                border: "none",
+                                borderRadius: 20,
+                                cursor: "pointer",
+                                fontWeight: 500,
+                                fontSize: 14
+                            }}
+                        >
+                            <Users size={18} />
+                            Share
+                        </button>
+                    }
+                />
                 <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 20, overflow: "hidden" }}>
                     {editorType === "richtext" ? (
                         <RichTextEditor fileId={fileId} initialFile={file} />
@@ -169,6 +196,14 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
                         <CodeEditor fileId={fileId} initialFile={file} />
                     )}
                 </main>
+                {shareModalOpen && file && (
+                    <ShareModal
+                        kind="file"
+                        id={file.id}
+                        name={file.name}
+                        onClose={() => setShareModalOpen(false)}
+                    />
+                )}
             </div>
         </div>
     );

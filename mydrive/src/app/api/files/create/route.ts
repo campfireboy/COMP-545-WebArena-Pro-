@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
         if (!session?.user?.id) return new NextResponse("Unauthorized", { status: 401 });
+        console.log(`[DEBUG] Create File - Session User ID: ${session.user.id}`);
 
         const body = await req.json();
         const { folderId, name: requestedName, content: requestedContent, mimeType: requestedMimeType } = body;
