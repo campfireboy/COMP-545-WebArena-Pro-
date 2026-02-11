@@ -1,4 +1,5 @@
-import { prisma } from "../src/lib/db";
+import { PrismaClient } from "@prisma/client";
+const prisma = new PrismaClient();
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -21,33 +22,25 @@ function hashPassword(password: string) {
 }
 
 export async function seedTestData() {
-  const inputMaterialsPath = path.join(process.cwd(), "InputMaterials");
+  const inputMaterialsPath = path.join(process.cwd(), "Media");
 
   if (!fs.existsSync(inputMaterialsPath)) {
-    console.log("No InputMaterials directory found, creating default.");
-    fs.mkdirSync(inputMaterialsPath, { recursive: true });
-    // create d1/d2 for demo if empty? keeping it simple for now.
+    console.log("No Media directory found.");
+    // We expect Media to exist from the Docker copy
   }
 
-  // Get directories d1, d2, ...
-  const entries = fs.readdirSync(inputMaterialsPath, { withFileTypes: true });
-  const agentDirs = entries
-    .filter(dirent => dirent.isDirectory())
-    .map(dirent => dirent.name)
-    .sort(); // d1, d2... (alphanumeric sort)
-
-  console.log(`Found agent directories: ${agentDirs.join(", ")}`);
+  // Define agents explicitly
+  const agents = [
+    { dir: "agent1", email: "agent1@test.com", password: "password", name: "Agent 1", username: "agent1" },
+    { dir: "agent2", email: "agent2@test.com", password: "password", name: "Agent 2", username: "agent2" }
+  ];
 
   const createdUsers = [];
 
-  for (let i = 0; i < agentDirs.length; i++) {
-    const dirName = agentDirs[i];
-    const agentIndex = i + 1; // 1-based index
-    const email = `agent${agentIndex}@test${agentIndex}.com`;
-    const username = `agent${agentIndex}`;
-    const name = `Agent${agentIndex} Test${agentIndex}`;
+  for (const agent of agents) {
+    const { dir, email, password, name, username } = agent;
 
-    console.log(`Processing ${username} (${email}) from ${dirName}...`);
+    console.log(`Processing ${username} (${email}) from ${dir}...`);
 
     // 1. Cleanup existing user
     const existingUser = await prisma.user.findUnique({
@@ -72,17 +65,19 @@ export async function seedTestData() {
         username,
         id: `user-${username}`,
         name,
-        password: hashPassword("password123"),
+        password: hashPassword(password),
       },
     });
     console.log(`[DEBUG] Seeded user: ${user.username} with ID: ${user.id}`);
     createdUsers.push(user);
 
     // 3. Upload Content
-    const agentRootPath = path.join(inputMaterialsPath, dirName);
+    const agentRootPath = path.join(inputMaterialsPath, dir);
     if (fs.existsSync(agentRootPath)) {
       console.log(`Uploading content from ${agentRootPath}...`);
       await uploadRecursive(agentRootPath, null, user.id);
+    } else {
+      console.log(`Warning: Content directory ${agentRootPath} not found.`);
     }
   }
 

@@ -1,23 +1,17 @@
-export const runtime = "nodejs";
 
+import { startTransition } from "react";
 import { NextResponse } from "next/server";
 import { seedTestData } from "../../../../../prisma/seed";
 
+export const dynamic = 'force-dynamic';
+
 export async function POST() {
   try {
-    // Just seed the database with folders
-    const seedResult = await seedTestData();
-
-    return NextResponse.json({
-      ok: true,
-      message: "Database reset successfully",
-      users: seedResult.users
-    });
+    console.log("Triggering database reset...");
+    const result = await seedTestData();
+    return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error("Reset error:", error);
-    return NextResponse.json({
-      error: "Reset failed",
-      details: error instanceof Error ? error.message : String(error)
-    }, { status: 500 });
+    console.error("Reset failed:", error);
+    return NextResponse.json({ success: false, error: "Reset failed" }, { status: 500 });
   }
 }

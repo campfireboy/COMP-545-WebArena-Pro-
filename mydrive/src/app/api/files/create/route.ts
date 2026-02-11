@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
         if (name.endsWith(".doc") && !requestedContent) {
             contentString = JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] });
-            mimeType = "application/vnd.google-apps.document";
+            mimeType = "application/json";
         } else {
             contentString = requestedContent || "";
             if (!requestedMimeType) {

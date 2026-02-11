@@ -38,57 +38,60 @@ export default function LoginContent() {
 
     return (
         <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
-            <form
-                onSubmit={handleSubmit}
-                style={{ width: "100%", maxWidth: 420, border: "1px solid #eee", borderRadius: 16, padding: 16 }}
-            >
-                <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Log in</h1>
-
-                <label style={{ display: "block", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Email</div>
-                    <input
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="you@example.com"
-                        autoComplete="email"
-                        style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
-                    />
-                </label>
-
-                <label style={{ display: "block", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Password</div>
-                    <input
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        type="password"
-                        autoComplete="current-password"
-                        style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
-                    />
-                </label>
-
-                {error ? <div style={{ color: "crimson", marginBottom: 10 }}>{error}</div> : null}
-
-                <button
-                    disabled={submitting}
-                    style={{
-                        width: "100%",
-                        padding: 10,
-                        borderRadius: 10,
-                        border: "1px solid #ddd",
-                        cursor: submitting ? "not-allowed" : "pointer",
-                    }}
+            <div style={{ width: "100%", maxWidth: 420 }}>
+                <h1 style={{ textAlign: "center", marginBottom: 20, fontSize: 32, fontWeight: 700, color: "#1f1f1f" }}>My Drive</h1>
+                <form
+                    onSubmit={handleSubmit}
+                    style={{ width: "100%", border: "1px solid #eee", borderRadius: 16, padding: 24, background: "white" }}
                 >
-                    {submitting ? "Logging in..." : "Log in"}
-                </button>
+                    <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Log in</h1>
 
-                <div style={{ marginTop: 12, fontSize: 13, opacity: 0.8 }}>
-                    No account?{" "}
-                    <a href="/signup" style={{ textDecoration: "underline" }}>
-                        Sign up
-                    </a>
-                </div>
-            </form>
+                    <label style={{ display: "block", marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Email</div>
+                        <input
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="you@example.com"
+                            autoComplete="email"
+                            style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
+                        />
+                    </label>
+
+                    <label style={{ display: "block", marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Password</div>
+                        <input
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            type="password"
+                            autoComplete="current-password"
+                            style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 10 }}
+                        />
+                    </label>
+
+                    {error ? <div style={{ color: "crimson", marginBottom: 10 }}>{error}</div> : null}
+
+                    <button
+                        disabled={submitting}
+                        style={{
+                            width: "100%",
+                            padding: 10,
+                            borderRadius: 10,
+                            border: "1px solid #ddd",
+                            cursor: submitting ? "not-allowed" : "pointer",
+                        }}
+                    >
+                        {submitting ? "Logging in..." : "Log in"}
+                    </button>
+
+                    <div style={{ marginTop: 12, fontSize: 13, opacity: 0.8 }}>
+                        No account?{" "}
+                        <a href="/signup" style={{ textDecoration: "underline" }}>
+                            Sign up
+                        </a>
+                    </div>
+                </form>
+            </div>
         </div>
     );
 }
