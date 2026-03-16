@@ -83,16 +83,12 @@ export async function GET(
     return NextResponse.json({ error: "Missing object body" }, { status: 500 });
   }
 
-  /* 
-     Reverted: Streaming directly to browser.
-  */
-  const nodeStream = obj.Body as unknown as Readable;
-  const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream;
+  const byteArray = await obj.Body.transformToByteArray();
 
   const headers = new Headers();
   headers.set("Content-Type", file.mimeType || "application/octet-stream");
   headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
-  if (typeof file.size === "number") headers.set("Content-Length", String(file.size));
+  headers.set("Content-Length", String(file.size || byteArray.length));
 
-  return new Response(webStream, { headers });
+  return new Response(Buffer.from(byteArray), { headers });
 }

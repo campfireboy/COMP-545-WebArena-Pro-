@@ -1,7 +1,7 @@
 import { useRouter } from "next/navigation";
-import { HardDrive, Users } from "lucide-react";
+import { HardDrive, Users, Trash2 } from "lucide-react";
 
-export function Sidebar({ activePage }: { activePage: "drive" | "shared" }) {
+export function Sidebar({ activePage }: { activePage: "drive" | "shared" | "trash" }) {
     const router = useRouter();
 
     const baseStyle = {
@@ -46,6 +46,13 @@ export function Sidebar({ activePage }: { activePage: "drive" | "shared" }) {
                 >
                     <Users size={20} />
                     Shared with me
+                </button>
+                <button
+                    onClick={() => router.push("/drive/trash")}
+                    style={activePage === "trash" ? activeStyle : baseStyle}
+                >
+                    <Trash2 size={20} />
+                    Trash
                 </button>
             </nav>
         </aside>

@@ -14,6 +14,7 @@ const patchSchema = z.object({
   name: z.string().min(1).optional(),
   s3Key: z.string().min(1).optional(),
   size: z.number().int().nonnegative().optional(),
+  inTrash: z.boolean().optional(),
 });
 
 type Ctx = { params: Promise<{ id: string }> | { id: string } };
@@ -81,7 +82,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
-  const { folderId, name, s3Key, size } = parsed.data;
+  const { folderId, name, s3Key, size, inTrash } = parsed.data;
 
   // If moving into a folder, confirm folder belongs to user
   if (folderId !== undefined && folderId !== null) {
@@ -99,6 +100,7 @@ export async function PATCH(
   if (folderId !== undefined) dataToUpdate.folderId = folderId;
   if (s3Key !== undefined) dataToUpdate.s3Key = s3Key;
   if (size !== undefined) dataToUpdate.size = size;
+  if (inTrash !== undefined) dataToUpdate.inTrash = inTrash;
 
   // --- NAME COLLISION CHECK ---
   if (name !== undefined || folderId !== undefined) {
@@ -188,20 +190,31 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
-  // delete shares first (manual cascade)
-  await prisma.share.deleteMany({ where: { fileId } });
+  const url = new URL(_req.url);
+  const permanent = url.searchParams.get("permanent") === "true";
 
-  // delete DB row
-  await prisma.fileObject.delete({ where: { id: fileId } });
+  if (permanent) {
+    // delete shares first (manual cascade)
+    await prisma.share.deleteMany({ where: { fileId } });
 
-  // best-effort S3 delete
-  const bucket = process.env.S3_BUCKET;
-  if (bucket) {
-    try {
-      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
-    } catch (e) {
-      console.error("S3 delete failed:", e);
+    // delete DB row
+    await prisma.fileObject.delete({ where: { id: fileId } });
+
+    // best-effort S3 delete
+    const bucket = process.env.S3_BUCKET;
+    if (bucket) {
+      try {
+        await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
+      } catch (e) {
+        console.error("S3 delete failed:", e);
+      }
     }
+  } else {
+    // Soft delete
+    await prisma.fileObject.update({
+      where: { id: fileId },
+      data: { inTrash: true },
+    });
   }
 
   return NextResponse.json({ ok: true, deletedId: fileId });

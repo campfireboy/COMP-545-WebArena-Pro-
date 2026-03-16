@@ -71,8 +71,12 @@ export async function PATCH(
   const body = await req.json().catch(() => ({}));
   const parentIdRaw = body?.parentId;
   const nameRaw = body?.name;
+  const inTrashRaw = body?.inTrash;
 
   const dataToUpdate: any = {};
+  if (inTrashRaw !== undefined) {
+    dataToUpdate.inTrash = inTrashRaw;
+  }
 
   // Defensive fix: Rename OR Move
   if (typeof nameRaw === "string" && nameRaw.trim().length > 0) {
@@ -209,20 +213,37 @@ export async function DELETE(
 
   if (!canDelete) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
+  const url = new URL(req.url);
+  const permanent = url.searchParams.get("permanent") === "true";
+
   const ids = await collectDescendantFolderIds(id);
   const idsBottomUp = [...ids].reverse();
 
-  await prisma.$transaction(async (tx) => {
-    // delete files in subtree first
-    await tx.fileObject.deleteMany({
-      where: { folderId: { in: ids } },
-    });
+  if (permanent) {
+    await prisma.$transaction(async (tx) => {
+      // delete files in subtree first
+      await tx.fileObject.deleteMany({
+        where: { folderId: { in: ids } },
+      });
 
-    // delete folders bottom-up
-    for (const fid of idsBottomUp) {
-      await tx.folder.delete({ where: { id: fid } });
-    }
-  });
+      // delete folders bottom-up
+      for (const fid of idsBottomUp) {
+        await tx.folder.delete({ where: { id: fid } });
+      }
+    });
+  } else {
+    // Soft delete
+    await prisma.$transaction(async (tx) => {
+      await tx.fileObject.updateMany({
+        where: { folderId: { in: ids } },
+        data: { inTrash: true },
+      });
+      await tx.folder.updateMany({
+        where: { id: { in: ids } },
+        data: { inTrash: true },
+      });
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

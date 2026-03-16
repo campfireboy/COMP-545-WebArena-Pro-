@@ -108,7 +108,9 @@ export default function CodeEditor({ fileId, initialFile }: { fileId: string, in
             if (canceled) return;
 
             // WebSocket
-            provider = new WebsocketProvider("ws://localhost:1234", fileId, ydoc);
+            const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
+            provider = new WebsocketProvider(wsUrl, fileId, ydoc);
 
             // Fetch initial if empty
             provider.on('synced', async (synced: any) => {

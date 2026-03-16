@@ -152,7 +152,9 @@ export default function SpreadsheetEditor({ fileId, initialFile }: { fileId: str
         if (!session) return;
         const ydoc = ydocRef.current;
         const persistence = new IndexeddbPersistence(fileId, ydoc);
-        const provider = new WebsocketProvider("ws://localhost:1234", fileId, ydoc);
+        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
+        const provider = new WebsocketProvider(wsUrl, fileId, ydoc);
 
         persistence.whenSynced.then(() => {
             loadGridFromYjs(); // Initial load from local

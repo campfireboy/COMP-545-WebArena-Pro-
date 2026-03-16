@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
         let contentString = "";
         let mimeType = requestedMimeType || "application/json";
 
-        if (name.endsWith(".doc") && !requestedContent) {
+        if ((name.endsWith(".doc") || name.endsWith(".docx")) && !requestedContent) {
             contentString = JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] });
             mimeType = "application/json";
         } else {

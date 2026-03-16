@@ -47,7 +47,7 @@ export default function EditorPage({ params }: { params: Promise<{ fileId: strin
                 const name = disposition.split("filename=")[1]?.replace(/"/g, "") || "Untitled";
 
                 // Determine Editor Type
-                if (name.endsWith(".doc")) {
+                if (name.endsWith(".doc") || name.endsWith(".docx")) {
                     setEditorType("richtext");
                 } else if (name.endsWith(".csv")) {
                     setEditorType("spreadsheet");

@@ -9,9 +9,23 @@ import { MediaPreviewModal } from "@/components/MediaPreviewModal";
 import {
   Folder as FolderIcon, FileText, Image as ImageIcon, Music, Video,
   MoreVertical, X, Plus, Users, Download, Trash2, Edit2, ArrowRight,
-  ChevronRight, Search, ChevronDown, ChevronUp, File, Check, Share2
+  ChevronRight, Search, ChevronDown, ChevronUp, File, Check, Share2,
+  RotateCcw
 } from "lucide-react";
 import { ShareModal, SharedItemPopover } from "@/components/ShareDialogs";
+
+function formatSize(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function formatDate(dateString: string) {
+  const d = new Date(dateString);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 type Folder = {
   id: string;
@@ -72,7 +86,7 @@ type Share = {
 
 
 
-export default function DriveView({ folderId }: { folderId: string | null }) {
+export default function DriveView({ folderId, viewType = "drive" }: { folderId: string | null, viewType?: "drive" | "trash" }) {
   const router = useRouter();
   const { data: session } = useSession();
 
@@ -310,19 +324,32 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
   async function load() {
     setLoading(true);
-    const url = folderId ? `/api/folders?parentId=${encodeURIComponent(folderId)}` : `/api/folders`;
-
-    const res = await fetch(url);
-    if (!res.ok) {
-      setLoading(false);
-      if (res.status === 401) router.push("/login");
-      return;
+    try {
+      if (viewType === "trash") {
+        const res = await fetch("/api/trash" + (folderId ? `?parentId=${folderId}` : ""));
+        if (res.ok) {
+          const data = await res.json();
+          setFolders(data.folders || []);
+          setFiles(data.files || []);
+          setBreadcrumbs(data.breadcrumbs || []);
+        } else {
+          console.error("Failed to load trash");
+        }
+      } else {
+        const res = await fetch(`/api/folders?parentId=${folderId || "null"}`);
+        if (res.ok) {
+          const data = await res.json();
+          setFolders(data.folders || []);
+          setFiles(data.files || []);
+          setBreadcrumbs(data.breadcrumbs || []);
+          // setPermission is handled via parent loading if needed, but not returned by trash
+        } else {
+          console.error("Failed to load folder");
+        }
+      }
+    } catch (e) {
+      console.error(e);
     }
-
-    const data = await res.json();
-    setFolders(data.folders ?? []);
-    setFiles(data.files ?? []);
-    setBreadcrumbs(data.breadcrumbs ?? []);
     setLoading(false);
   }
 
@@ -356,8 +383,8 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
   }, [menu, addMenuOpen]);
 
   // Sorting State
-  const [sortField, setSortField] = useState<"name" | "type">("type");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortField, setSortField] = useState<"name" | "type" | "date" | "size">("date");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Selection State
   // Format: "folder:id" or "file:id"
@@ -463,6 +490,12 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
         const typeA = a.kind === "folder" ? "000_folder" : (a as FileObject).mimeType;
         const typeB = b.kind === "folder" ? "000_folder" : (b as FileObject).mimeType;
         res = typeA.localeCompare(typeB);
+      } else if (sortField === "date") {
+        res = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      } else if (sortField === "size") {
+        const sizeA = a.kind === "folder" ? 0 : (a as FileObject).size;
+        const sizeB = b.kind === "folder" ? 0 : (b as FileObject).size;
+        res = sizeA - sizeB;
       }
       return sortDirection === "asc" ? res : -res;
     });
@@ -499,18 +532,95 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
     await load();
   }
 
-  async function deleteFolder(folderIdToDelete: string) {
+  async function handleDelete(itemType?: "folder" | "file", itemId?: string) {
+    if (!menu && !itemId && selectedIds.size === 0) return;
+    const kind = itemType || menu?.kind;
+    const id = itemId || menu?.id;
+
+    const isPermanent = viewType === "trash" ? "?permanent=true" : "";
+    let res;
+    if (selectedIds.size > 0 && !itemId) {
+      const promises = Array.from(selectedIds).map(async (key) => {
+        const [k, i] = key.split(":");
+        const url = k === "folder" ? `/api/folders/${i}${isPermanent}` : `/api/files/${i}${isPermanent}`;
+        return fetch(url, { method: "DELETE" });
+      });
+      await Promise.all(promises);
+    } else if (kind && id) {
+      const url = kind === "folder" ? `/api/folders/${id}${isPermanent}` : `/api/files/${id}${isPermanent}`;
+      res = await fetch(url, { method: "DELETE" });
+      if (!res.ok) alert(`Failed to delete ${kind}`);
+    }
     setMenu(null);
-    const res = await fetch(`/api/folders/${folderIdToDelete}`, { method: "DELETE" });
-    if (!res.ok) alert("Failed to delete folder");
-    else await load();
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+    await load();
   }
 
-  async function deleteFile(fileId: string) {
+  async function handleEmptyTrash() {
+    if (!confirm("Are you sure you want to permanently delete all items in the trash? This cannot be undone.")) return;
+    const res = await fetch("/api/trash/empty", { method: "POST" });
+    if (res.ok) await load();
+    else alert("Failed to empty trash");
+  }
+
+  async function handleRestoreAll() {
+    if (!confirm("Are you sure you want to restore all items in the trash?")) return;
+    const res = await fetch("/api/trash/restore-all", { method: "POST" });
+    if (res.ok) await load();
+    else alert("Failed to restore items");
+  }
+
+  async function handleRestore(itemType?: "folder" | "file", itemId?: string) {
+    if (!menu && !itemId && selectedIds.size === 0) return;
+    const kind = itemType || menu?.kind;
+    const id = itemId || menu?.id;
+
+    if (selectedIds.size > 0 && !itemId) {
+      const promises = Array.from(selectedIds).map(async (key) => {
+        const [k, i] = key.split(":");
+        const url = k === "folder" ? `/api/folders/${i}` : `/api/files/${i}`;
+        const body = k === "folder" ? { inTrash: false, parentId: null } : { inTrash: false, folderId: null };
+        return fetch(url, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      });
+      await Promise.all(promises);
+    } else if (kind && id) {
+      const url = kind === "folder" ? `/api/folders/${id}` : `/api/files/${id}`;
+      const body = kind === "folder" ? { inTrash: false, parentId: null } : { inTrash: false, folderId: null };
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) alert(`Failed to restore ${kind}`);
+    }
+
     setMenu(null);
-    const res = await fetch(`/api/files/${fileId}`, { method: "DELETE" });
-    if (!res.ok) alert("Failed to delete file");
-    else await load();
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+    await load();
+  }
+
+  async function handleFolderDownload(id: string, name: string) {
+    const res = await fetch(`/api/folders/${id}/download`);
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to download folder. It might be empty.");
+    }
   }
 
   async function renameFolder(id: string) {
@@ -588,7 +698,7 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
       <Header />
       <div style={{ display: "flex", flex: 1, position: "relative" }}>
         {/* Sidebar */}
-        <Sidebar activePage="drive" />
+        <Sidebar activePage={viewType === "trash" ? "trash" : "drive"} />
 
         {/* Main */}
         <main
@@ -629,16 +739,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, fontWeight: 600, color: "#444746" }}>
                   <span
-                    onClick={() => router.push("/drive")}
+                    onClick={() => router.push(viewType === "trash" ? "/drive/trash" : "/drive")}
                     style={{ cursor: "pointer", color: breadcrumbs.length === 0 ? "#1f1f1f" : "inherit" }}
                   >
-                    My Drive
+                    {viewType === "trash" ? "Trash" : "My Drive"}
                   </span>
                   {breadcrumbs.map((b, i) => (
                     <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <ChevronRight size={16} color="#747775" />
                       <span
-                        onClick={() => i < breadcrumbs.length - 1 ? router.push(`/drive/f/${b.id}`) : null}
+                        onClick={() => i < breadcrumbs.length - 1 ? router.push(viewType === "trash" ? `/drive/trash/f/${b.id}` : `/drive/f/${b.id}`) : null}
                         style={{
                           cursor: i < breadcrumbs.length - 1 ? "pointer" : "default",
                           color: i === breadcrumbs.length - 1 ? "#1f1f1f" : "inherit"
@@ -652,27 +762,37 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
                 {/* SORT CONTROLS */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ position: "relative" }}>
-                    <select
-                      value={sortField}
-                      onChange={(e) => setSortField(e.target.value as any)}
-                      style={{
-                        padding: "8px 32px 8px 12px",
-                        borderRadius: 8,
-                        border: "1px solid #747775",
-                        background: "white",
-                        cursor: "pointer",
-                        fontSize: 14,
-                        color: "#444746",
-                        appearance: "none",
-                        fontWeight: 500
-                      }}
-                    >
-                      <option value="name">Name</option>
-                      <option value="type">Type</option>
-                    </select>
-                    <ChevronDown size={14} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#444746" }} />
-                  </div>
+                  {viewType !== "trash" && (
+                    <div style={{ position: "relative" }}>
+                      <select
+                        value={sortField}
+                        onChange={(e) => setSortField(e.target.value as any)}
+                        style={{
+                          padding: "8px 32px 8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid #747775",
+                          background: "white",
+                          cursor: "pointer",
+                          fontSize: 14,
+                          color: "#444746",
+                          appearance: "none",
+                          fontWeight: 500
+                        }}
+                      >
+                        <option value="name">Name</option>
+                        <option value="type">Type</option>
+                        <option value="date">Date Modified</option>
+                        <option value="size">Size</option>
+                      </select>
+                      <ChevronDown size={14} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#444746" }} />
+                    </div>
+                  )}
+                  {viewType === "trash" && (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={handleRestoreAll} style={{ padding: "8px 16px", background: "white", color: "#1a73e8", border: "1px solid #1a73e8", borderRadius: 4, cursor: "pointer", fontWeight: 500 }}>Restore All</button>
+                      <button onClick={handleEmptyTrash} style={{ padding: "8px 16px", background: "#d93025", color: "white", border: "none", borderRadius: 4, cursor: "pointer", fontWeight: 500 }}>Empty Trash</button>
+                    </div>
+                  )}
                   <button
                     onClick={() => setSortDirection(prev => prev === "asc" ? "desc" : "asc")}
                     style={{
@@ -747,7 +867,8 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                         if (kind === "file") {
                           window.location.href = `/api/files/${id}/download`;
                         } else {
-                          window.location.href = `/api/folders/${id}/download`;
+                          const folder = folders.find(f => f.id === id);
+                          if (folder) handleFolderDownload(id, folder.name);
                         }
                       }}
                       title="Download"
@@ -756,10 +877,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                       <Download size={20} />
                     </button>
                   )}
-                  <button onClick={initiateMoveSelected} title="Move" aria-label="Move" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
-                    <ArrowRight size={20} />
-                  </button>
-                  <button onClick={deleteSelected} title="Delete" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
+                  {viewType === "trash" ? (
+                    <button onClick={() => handleRestore(undefined, undefined)} title="Restore" aria-label="Restore" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
+                      <RotateCcw size={20} />
+                    </button>
+                  ) : (
+                    <button onClick={initiateMoveSelected} title="Move" aria-label="Move" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
+                      <ArrowRight size={20} />
+                    </button>
+                  )}
+                  <button onClick={() => handleDelete(undefined, undefined)} title="Delete" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#444746" }}>
                     <Trash2 size={20} />
                   </button>
                 </div>
@@ -767,6 +894,12 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
               {/* UNIFIED LIST */}
               <div style={{ border: "1px solid #c4c7c5", borderRadius: 12, overflow: "hidden", userSelect: "none" }}>
+                <div style={{ display: "flex", padding: "10px 16px", borderBottom: "1px solid #c4c7c5", background: "#f8fafd", fontWeight: 600, color: "#444746", fontSize: 13 }}>
+                  <div style={{ flex: 1 }}>Name</div>
+                  <div style={{ width: 120, flexShrink: 0 }}>Date Modified</div>
+                  <div style={{ width: 100, flexShrink: 0 }}>Size</div>
+                  <div style={{ width: 220, flexShrink: 0, textAlign: "right", paddingRight: 8 }}>Actions</div>
+                </div>
                 {sortedItems.map((item, index) => {
                   if (item.kind === "folder") {
                     const f = item as Folder;
@@ -775,12 +908,19 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     return (
                       <div key={`folder-${f.id}`}
                         onContextMenu={(e) => handleContextMenu(e, "folder", f.id)}
-                        onClick={() => router.push(`/drive/f/${f.id}`)}
-                        onDoubleClick={() => router.push(`/drive/f/${f.id}`)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!selectionMode) {
+                            setSelectedIds(new Set([`folder:${f.id}`]));
+                          } else {
+                            handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems);
+                          }
+                        }}
+                        onDoubleClick={() => router.push(viewType === "trash" ? `/drive/trash/f/${f.id}` : `/drive/f/${f.id}`)}
                         role="button"
                         tabIndex={0}
                         aria-label={`Folder: ${f.name}`}
-                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/drive/f/${f.id}`); }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(viewType === "trash" ? `/drive/trash/f/${f.id}` : `/drive/f/${f.id}`); }}
                         style={{
                           display: "flex", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f2f2f2", alignItems: "center",
                           cursor: "pointer",
@@ -807,76 +947,6 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                               >
                                 {f.name}
                               </div>
-                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "folder", f); }}
-                                  style={{
-                                    width: 48, height: 48, borderRadius: 24,
-                                    border: "none", background: "transparent",
-                                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                                    color: "#444746"
-                                  }}
-                                  title={owned ? "Share" : "Shared Details"}
-                                >
-                                  <Users size={24} />
-                                </button>
-                                {selectionMode ? (
-                                  <div
-                                    onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems); }}
-                                    style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}
-                                  >
-                                    <div style={{
-                                      width: 20, height: 20, borderRadius: 10,
-                                      border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
-                                      background: isSelected ? "#0b57d0" : "transparent",
-                                      display: "flex", alignItems: "center", justifyContent: "center"
-                                    }}>
-                                      {isSelected && <Check size={14} color="white" />}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    {/* Inline Actions */}
-                                    {owned ? (
-                                      <>
-                                        <button
-                                          aria-label="Rename"
-                                          onClick={(e) => { e.stopPropagation(); renameFolder(f.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                          title="Rename"
-                                        >
-                                          <Edit2 size={24} />
-                                        </button>
-                                        <button
-                                          aria-label="Move"
-                                          onClick={(e) => { e.stopPropagation(); initiateMoveSingle("folder", f.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                          title="Move"
-                                        >
-                                          <ArrowRight size={24} />
-                                        </button>
-                                        <button
-                                          aria-label="Delete"
-                                          onClick={(e) => { e.stopPropagation(); deleteFolder(f.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
-                                          title="Delete"
-                                        >
-                                          <Trash2 size={24} />
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        aria-label="Open"
-                                        onClick={(e) => { e.stopPropagation(); router.push(`/drive/f/${f.id}`); }}
-                                        style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                        title="Open"
-                                      >
-                                        <ArrowRight size={24} />
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
                             </div>
                             {/* @ts-expect-error path is dynamic */}
                             {f.path && <div style={{ fontSize: 11, color: "#5e5e5e" }}>{f.path}</div>}
@@ -884,7 +954,104 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                           </div>
                         </div>
 
-                        {/* Spacer to replace old button area if needed, but flex justify-between handles spacing */}
+                        {/* Date and Size */}
+                        <div style={{ width: 120, flexShrink: 0, fontSize: 13, color: "#5e5e5e" }}>{formatDate(f.createdAt)}</div>
+                        <div style={{ width: 100, flexShrink: 0, fontSize: 13, color: "#5e5e5e" }}>--</div>
+
+                        {/* Actions */}
+                        <div style={{ width: 220, display: "flex", justifyContent: "flex-end", gap: 4, flexShrink: 0 }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "folder", f); }}
+                            style={{
+                              width: 40, height: 40, borderRadius: 20,
+                              border: "none", background: "transparent",
+                              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                              color: "#444746"
+                            }}
+                            title={owned ? "Share" : "Shared Details"}
+                          >
+                            <Users size={20} />
+                          </button>
+                          {selectionMode ? (
+                            <div
+                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems); }}
+                              style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              <div style={{
+                                width: 20, height: 20, borderRadius: 10,
+                                border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                background: isSelected ? "#0b57d0" : "transparent",
+                                display: "flex", alignItems: "center", justifyContent: "center"
+                              }}>
+                                {isSelected && <Check size={14} color="white" />}
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {/* Inline Actions */}
+                              {owned && (
+                                <>
+                                  <button
+                                    aria-label="Rename"
+                                    onClick={(e) => { e.stopPropagation(); renameFolder(f.id); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                    title="Rename"
+                                  >
+                                    <Edit2 size={20} />
+                                  </button>
+                                  {viewType !== "trash" && (
+                                    <button
+                                      aria-label="Move"
+                                      onClick={(e) => { e.stopPropagation(); initiateMoveSingle("folder", f.id); }}
+                                      style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                      title="Move"
+                                    >
+                                      <ArrowRight size={20} />
+                                    </button>
+                                  )}
+                                  {viewType === "trash" && (
+                                    <button
+                                      aria-label="Restore"
+                                      onClick={(e) => { e.stopPropagation(); handleRestore("folder", f.id); }}
+                                      style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                      title="Restore"
+                                    >
+                                      <RotateCcw size={20} />
+                                    </button>
+                                  )}
+                                  <button
+                                    aria-label="Download"
+                                    onClick={(e) => { e.stopPropagation(); handleFolderDownload(f.id, f.name); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                    title="Download"
+                                  >
+                                    <Download size={20} />
+                                  </button>
+                                  <button
+                                    aria-label="Delete"
+                                    onClick={(e) => { e.stopPropagation(); handleDelete("folder", f.id); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={20} />
+                                  </button>
+                                </>
+                              )}
+                              {!owned && viewType !== "trash" && (
+                                <>
+                                  <button
+                                    aria-label="Download"
+                                    onClick={(e) => { e.stopPropagation(); handleFolderDownload(f.id, f.name); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                    title="Download"
+                                  >
+                                    <Download size={20} />
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                     );
                   } else {
@@ -894,15 +1061,16 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     return (
                       <div key={`file-${file.id}`}
                         onContextMenu={(e) => handleContextMenu(e, "file", file.id)}
-                        onClick={() => {
-                          if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType)) {
-                            setPreviewFile(file);
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!selectionMode) {
+                            setSelectedIds(new Set([`file:${file.id}`]));
                           } else {
-                            router.push(`/drive/file/${file.id}`);
+                            handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems);
                           }
                         }}
                         onDoubleClick={() => {
-                          if (["image/jpeg", "video/mp4", "audio/mpeg"].includes(file.mimeType)) {
+                          if (["image/jpeg", "image/png", "image/gif", "video/mp4", "audio/mpeg", "image/webp"].includes(file.mimeType)) {
                             setPreviewFile(file);
                           } else {
                             router.push(`/drive/file/${file.id}`);
@@ -947,91 +1115,108 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                               >
                                 {item.name}
                               </div>
-                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "file", file); }}
-                                  style={{
-                                    width: 48, height: 48, borderRadius: 24,
-                                    border: "none", background: "transparent",
-                                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746"
-                                  }}
-                                  title={owned ? "Share" : "Shared Details"}
-                                >
-                                  <Users size={24} />
-                                </button>
-                                {selectionMode ? (
-                                  <div
-                                    onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems); }}
-                                    style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}
-                                  >
-                                    <div style={{
-                                      width: 20, height: 20, borderRadius: 10,
-                                      border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
-                                      background: isSelected ? "#0b57d0" : "transparent",
-                                      display: "flex", alignItems: "center", justifyContent: "center"
-                                    }}>
-                                      {isSelected && <Check size={14} color="white" />}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    {/* Inline Actions */}
-                                    {owned ? (
-                                      <>
-                                        <button
-                                          aria-label="Rename"
-                                          onClick={(e) => { e.stopPropagation(); renameFile(file.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                          title="Rename"
-                                        >
-                                          <Edit2 size={24} />
-                                        </button>
-                                        <button
-                                          aria-label="Move"
-                                          onClick={(e) => { e.stopPropagation(); initiateMoveSingle("file", file.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                          title="Move"
-                                        >
-                                          <ArrowRight size={24} />
-                                        </button>
-                                        <button
-                                          aria-label="Download"
-                                          onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                          title="Download"
-                                        >
-                                          <Download size={24} />
-                                        </button>
-                                        <button
-                                          aria-label="Delete"
-                                          onClick={(e) => { e.stopPropagation(); deleteFile(file.id); }}
-                                          style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
-                                          title="Delete"
-                                        >
-                                          <Trash2 size={24} />
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        aria-label="Download"
-                                        onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
-                                        style={{ width: 48, height: 48, borderRadius: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
-                                        title="Download"
-                                      >
-                                        <Download size={24} />
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
                             </div>
                             {/* @ts-expect-error path is dynamic */}
                             {file.path && <div style={{ fontSize: 11, color: "#5e5e5e" }}>{file.path}</div>}
-                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>{file.mimeType} • {Math.round(file.size / 1024)} KB {!owned ? `(Shared by ${file.owner?.username || file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
+                            <div style={{ fontSize: 11, color: "#5e5e5e" }}>{file.mimeType} {!owned ? `(Shared by ${file.owner?.username || file.owner?.name || file.owner?.email || "Unknown"})` : ""}</div>
                           </div>
                         </div>
 
-                        {/* Space placeholder */}
+                        {/* Date and Size */}
+                        <div style={{ width: 120, flexShrink: 0, fontSize: 13, color: "#5e5e5e" }}>{formatDate(file.createdAt)}</div>
+                        <div style={{ width: 100, flexShrink: 0, fontSize: 13, color: "#5e5e5e" }}>{formatSize(file.size)}</div>
+
+                        {/* Actions */}
+                        <div style={{ width: 220, display: "flex", justifyContent: "flex-end", gap: 4, flexShrink: 0 }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSharePopover(e, "file", file); }}
+                            style={{
+                              width: 40, height: 40, borderRadius: 20,
+                              border: "none", background: "transparent",
+                              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746"
+                            }}
+                            title={owned ? "Share" : "Shared Details"}
+                          >
+                            <Users size={20} />
+                          </button>
+                          {selectionMode ? (
+                            <div
+                              onClick={(e) => { e.stopPropagation(); handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems); }}
+                              style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center" }}
+                            >
+                              <div style={{
+                                width: 20, height: 20, borderRadius: 10,
+                                border: "2px solid", borderColor: isSelected ? "#0b57d0" : "#444746",
+                                background: isSelected ? "#0b57d0" : "transparent",
+                                display: "flex", alignItems: "center", justifyContent: "center"
+                              }}>
+                                {isSelected && <Check size={14} color="white" />}
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {/* Inline Actions */}
+                              {owned && (
+                                <>
+                                  <button
+                                    aria-label="Rename"
+                                    onClick={(e) => { e.stopPropagation(); renameFile(file.id); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                    title="Rename"
+                                  >
+                                    <Edit2 size={20} />
+                                  </button>
+                                  {viewType !== "trash" && (
+                                    <button
+                                      aria-label="Move"
+                                      onClick={(e) => { e.stopPropagation(); initiateMoveSingle("file", file.id); }}
+                                      style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                      title="Move"
+                                    >
+                                      <ArrowRight size={20} />
+                                    </button>
+                                  )}
+                                  {viewType === "trash" && (
+                                    <button
+                                      aria-label="Restore"
+                                      onClick={(e) => { e.stopPropagation(); handleRestore("file", file.id); }}
+                                      style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                      title="Restore"
+                                    >
+                                      <RotateCcw size={20} />
+                                    </button>
+                                  )}
+                                  <button
+                                    aria-label="Download"
+                                    onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                    title="Download"
+                                  >
+                                    <Download size={20} />
+                                  </button>
+                                  <button
+                                    aria-label="Delete"
+                                    onClick={(e) => { e.stopPropagation(); handleDelete("file", file.id); }}
+                                    style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#d93025" }}
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={20} />
+                                  </button>
+                                </>
+                              )}
+                              {!owned && viewType !== "trash" && (
+                                <button
+                                  aria-label="Download"
+                                  onClick={(e) => { e.stopPropagation(); window.location.href = `/api/files/${file.id}/download`; }}
+                                  style={{ width: 40, height: 40, borderRadius: 20, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#444746" }}
+                                  title="Download"
+                                >
+                                  <Download size={20} />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                     );
                   }
@@ -1043,106 +1228,108 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
 
 
 
-          {/* PLUS BUTTON */}
-          <div style={{ position: "fixed", bottom: 40, right: 40, zIndex: 1000 }}>
-            <button
-              ref={addBtnRef}
-              aria-label="New"
-              title="New"
-              onClick={() => setAddMenuOpen(!addMenuOpen)}
-              style={{
-                width: 56, height: 56, borderRadius: 16,
-                background: "#c2e7ff", color: "#001d35",
-                border: "none",
-                boxShadow: "0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "box-shadow 0.08s linear, min-width 0.15s cubic-bezier(0.4,0.0,0.2,1)"
-              }}
-            >
-              <Plus size={24} strokeWidth={2.5} />
-            </button>
-
-            {addMenuOpen && (
-              <div
-                ref={addMenuRef}
+          {/* PLUS BUTTON (Hidden in Trash) */}
+          {viewType !== "trash" && (
+            <div style={{ position: "absolute", bottom: 40, left: 40, zIndex: 1000 }}>
+              <button
+                ref={addBtnRef}
+                aria-label="New"
+                title="New"
+                onClick={() => setAddMenuOpen(!addMenuOpen)}
                 style={{
-                  position: "absolute", bottom: 70, left: 0,
-                  background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-                  width: 200, overflow: "hidden", border: "1px solid #ddd"
+                  width: 56, height: 56, borderRadius: 16,
+                  background: "#c2e7ff", color: "#001d35",
+                  border: "none",
+                  boxShadow: "0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)",
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "box-shadow 0.08s linear, min-width 0.15s cubic-bezier(0.4,0.0,0.2,1)"
                 }}
               >
-                {!codeMenuOpen ? (
-                  <>
-                    <button
-                      data-testid="new-folder-button"
-                      onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      New Folder
-                    </button>
-                    <button
-                      onClick={() => createFile("Untitled Document.doc", JSON.stringify({ type: "doc", content: [] }), "application/vnd.google-apps.document")}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      New Document
-                    </button>
-                    <button
-                      onClick={() => createFile("Untitled Spreadsheet.csv", "", "text/csv")}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      New Spreadsheet
-                    </button>
-                    <button
-                      onClick={() => setCodeMenuOpen(true)}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                    >
-                      <span>Code File</span>
-                      <span style={{ fontSize: 10 }}>▶</span>
-                    </button>
-                    <button
-                      onClick={() => { setAddMenuOpen(false); folderInputRef.current?.click(); }}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      Folder Upload
-                    </button>
-                    <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
-                    <button
-                      onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
-                      style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                    >
-                      File Upload
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setCodeMenuOpen(false)}
-                      style={{ width: "100%", textAlign: "left", padding: "8px 16px", background: "#f8f9fa", border: "none", cursor: "pointer", fontWeight: 600, borderBottom: "1px solid #eee", color: "#555" }}
-                    >
-                      ◀ Back
-                    </button>
-                    {[
-                      { name: "Python", ext: "py", mime: "text/x-python" },
-                      { name: "Java", ext: "java", mime: "text/x-java-source" },
-                      { name: "JavaScript", ext: "js", mime: "application/javascript" },
-                      { name: "HTML", ext: "html", mime: "text/html" },
-                      { name: "CSS", ext: "css", mime: "text/css" },
-                      { name: "C++", ext: "cpp", mime: "text/x-c++src" },
-                      { name: "Text", ext: "txt", mime: "text/plain" },
-                    ].map(lang => (
+                <Plus size={24} strokeWidth={2.5} />
+              </button>
+
+              {addMenuOpen && (
+                <div
+                  ref={addMenuRef}
+                  style={{
+                    position: "absolute", bottom: 70, left: 0,
+                    background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                    width: 200, overflow: "hidden", border: "1px solid #ddd"
+                  }}
+                >
+                  {!codeMenuOpen ? (
+                    <>
                       <button
-                        key={lang.ext}
-                        onClick={() => createFile(`Untitled.${lang.ext}`, "", lang.mime)}
-                        style={{ width: "100%", textAlign: "left", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 14 }}
+                        data-testid="new-folder-button"
+                        onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
                       >
-                        {lang.name}
+                        New Folder
                       </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+                      <button
+                        onClick={() => createFile("Untitled Document.doc", JSON.stringify({ type: "doc", content: [] }), "application/vnd.google-apps.document")}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        New Document
+                      </button>
+                      <button
+                        onClick={() => createFile("Untitled Spreadsheet.csv", "", "text/csv")}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        New Spreadsheet
+                      </button>
+                      <button
+                        onClick={() => setCodeMenuOpen(true)}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                      >
+                        <span>Code File</span>
+                        <span style={{ fontSize: 10 }}>▶</span>
+                      </button>
+                      <button
+                        onClick={() => { setAddMenuOpen(false); folderInputRef.current?.click(); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        Folder Upload
+                      </button>
+                      <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
+                      <button
+                        onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        File Upload
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setCodeMenuOpen(false)}
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", background: "#f8f9fa", border: "none", cursor: "pointer", fontWeight: 600, borderBottom: "1px solid #eee", color: "#555" }}
+                      >
+                        ◀ Back
+                      </button>
+                      {[
+                        { name: "Python", ext: "py", mime: "text/x-python" },
+                        { name: "Java", ext: "java", mime: "text/x-java-source" },
+                        { name: "JavaScript", ext: "js", mime: "application/javascript" },
+                        { name: "HTML", ext: "html", mime: "text/html" },
+                        { name: "CSS", ext: "css", mime: "text/css" },
+                        { name: "C++", ext: "cpp", mime: "text/x-c++src" },
+                        { name: "Text", ext: "txt", mime: "text/plain" },
+                      ].map(lang => (
+                        <button
+                          key={lang.ext}
+                          onClick={() => createFile(`Untitled.${lang.ext}`, "", lang.mime)}
+                          style={{ width: "100%", textAlign: "left", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 14 }}
+                        >
+                          {lang.name}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Hidden File Input */}
           <input
@@ -1317,8 +1504,17 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     {selectedIds.size} Selected
                   </div>
                   <MenuDivider />
-                  <MenuItem label="Move to..." onClick={initiateMoveSelected} />
-                  <MenuItem label="Delete" danger onClick={deleteSelected} />
+                  {viewType === "trash" ? (
+                    <>
+                      <MenuItem label="Restore" onClick={() => handleRestore()} />
+                      <MenuItem label="Delete forever" danger onClick={() => handleDelete()} />
+                    </>
+                  ) : (
+                    <>
+                      <MenuItem label="Move to..." onClick={initiateMoveSelected} />
+                      <MenuItem label="Delete" danger onClick={() => handleDelete()} />
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -1332,15 +1528,24 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     });
                     setMenu(null);
                   }} />
-                  <MenuItem label="Open" onClick={() => {
-                    if (menu.kind === "folder") router.push(`/drive/f/${menu.id}`);
-                    else router.push(`/drive/file/${menu.id}`);
-                  }} />
-                  <MenuItem label="Rename" onClick={() => { if (menu.kind === "file") renameFile(menu.id); else renameFolder(menu.id); }} />
-                  <MenuItem label="Move to..." onClick={() => initiateMoveSingle(menu.kind, menu.id)} />
-                  <MenuDivider />
-                  <MenuItem label="Delete" danger onClick={() => { if (menu.kind === "file") deleteFile(menu.id); else deleteFolder(menu.id); }} />
-                  {menu.kind === "file" && <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.id}/download`} />}
+                  {viewType === "trash" ? (
+                    <>
+                      <MenuItem label="Restore" onClick={() => handleRestore()} />
+                      <MenuItem label="Delete forever" danger onClick={() => handleDelete()} />
+                    </>
+                  ) : (
+                    <>
+                      <MenuItem label="Open" onClick={() => {
+                        if (menu.kind === "folder") router.push(`/drive/f/${menu.id}`);
+                        else router.push(`/drive/file/${menu.id}`);
+                      }} />
+                      <MenuItem label="Rename" onClick={() => { if (menu.kind === "file") renameFile(menu.id); else renameFolder(menu.id); }} />
+                      <MenuItem label="Move to..." onClick={() => initiateMoveSingle(menu.kind, menu.id)} />
+                      <MenuDivider />
+                      <MenuItem label="Delete" danger onClick={() => handleDelete(menu.kind, menu.id)} />
+                      {menu.kind === "file" && <MenuItem label="Download" onClick={() => window.location.href = `/api/files/${menu.id}/download`} />}
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -1363,11 +1568,11 @@ export default function DriveView({ folderId }: { folderId: string | null }) {
                     onClick={() => performMove(null)}
                     role="button"
                     tabIndex={0}
-                    aria-label="Move to Root"
+                    aria-label={viewType === "trash" ? "Move to Trash Root" : "Move to Root"}
                     onKeyDown={e => e.key === "Enter" && performMove(null)}
                     style={{ padding: 10, cursor: "pointer", borderBottom: "1px solid #eee", fontWeight: 600 }}
                   >
-                    My Drive (Root)
+                    {viewType === "trash" ? "Trash (Root)" : "My Drive (Root)"}
                   </div>
                   {moveDestinations.map(f => (
                     <div

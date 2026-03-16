@@ -84,5 +84,7 @@ export async function POST(req: Request) {
 
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 60 });
 
-  return NextResponse.json({ uploadUrl, s3Key });
+  const proxyUrl = `/api/files/upload-proxy?url=${encodeURIComponent(uploadUrl)}&size=${parsed.data.size}`;
+
+  return NextResponse.json({ uploadUrl: proxyUrl, s3Key });
 }

@@ -7,6 +7,8 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import { useSession } from "next-auth/react";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { saveAs } from "file-saver";
+// @ts-ignore
+import * as mammoth from "mammoth/mammoth.browser";
 
 // TipTap Imports
 import { useEditor, EditorContent, Editor } from '@tiptap/react';
@@ -233,6 +235,9 @@ export default function RichTextEditor({ fileId, initialFile }: { fileId: string
         }
     }, [status, save]);
 
+    const editorRef = useRef<Editor | null>(null);
+    useEffect(() => { editorRef.current = editor; }, [editor]);
+
     // Init Logic
     useEffect(() => {
         let persistence: IndexeddbPersistence | null = null;
@@ -243,27 +248,57 @@ export default function RichTextEditor({ fileId, initialFile }: { fileId: string
             persistence = new IndexeddbPersistence(fileId, ydoc);
             await persistence.whenSynced;
 
-            wsProvider = new WebsocketProvider("ws://localhost:1234", fileId, ydoc);
+            const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
+            wsProvider = new WebsocketProvider(wsUrl, fileId, ydoc);
             setProvider(wsProvider);
 
             wsProvider.on('synced', async (synced: any) => {
-                if (synced && editor && editor.isEmpty) {
+                const currentEditor = editorRef.current;
+                if (synced && currentEditor && currentEditor.isEmpty) {
                     // Try to load initial content
                     try {
                         const res = await fetch(`/api/files/${fileId}/download`);
                         if (res.ok) {
-                            const text = await res.text();
-                            if (text.length > 0) {
+                            const arrayBuffer = await res.arrayBuffer();
+                            const text = new TextDecoder().decode(arrayBuffer);
+
+                            if (arrayBuffer.byteLength > 0) {
+                                let loaded = false;
                                 try {
+                                    // Try JSON first (if it was previously saved by this editor)
                                     const json = JSON.parse(text);
-                                    editor.commands.setContent(json);
+                                    currentEditor.commands.setContent(json);
+                                    loaded = true;
                                 } catch (e) {
-                                    // Fallback if not JSON (legacy HTML)
-                                    editor.commands.setContent(text);
+                                    // Not JSON
+                                    const isWord = initialFile.name.endsWith('.doc') || initialFile.name.endsWith('.docx');
+                                    console.log("Is Word DOC?:", isWord, "File name:", initialFile.name, "Buffer:", arrayBuffer.byteLength);
+                                    if (isWord) {
+                                        try {
+                                            // Handle varying ESM/CommonJS imports for mammoth browser build
+                                            const convertFn = mammoth.convertToHtml || (mammoth as any).default?.convertToHtml;
+                                            if (!convertFn) {
+                                                console.error("Mammoth convertToHtml function not found on imported object", mammoth);
+                                            } else {
+                                                console.log("Calling Mammoth convertToHtml...");
+                                                const result = await convertFn({ arrayBuffer });
+                                                console.log("Mammoth Result Length:", result.value.length, "Result preview:", result.value.substring(0, 50));
+                                                currentEditor.commands.setContent(result.value);
+                                                loaded = true;
+                                            }
+                                        } catch (mammothErr) {
+                                            console.error("Mammoth conversion failed:", mammothErr);
+                                        }
+                                    }
+                                    if (!loaded) {
+                                        // Fallback legacy HTML / Text
+                                        currentEditor.commands.setContent(text);
+                                    }
                                 }
                             }
                         }
-                    } catch (e) { console.error("Failed load"); }
+                    } catch (e) { console.error("Failed load", e); }
                 }
             });
         }
@@ -272,11 +307,7 @@ export default function RichTextEditor({ fileId, initialFile }: { fileId: string
             if (wsProvider) wsProvider.destroy();
             if (persistence) persistence.destroy();
         };
-    }, [fileId]); // Removed editor dependancy to prevent loop. editor content init handled inside via ref or check.
-    // Actually, we need to set content on editor. We can use a ref or just dependency.
-    // Ideally we don't re-run init when editor changes.
-
-    // Fix: The original code had [fileId, editor]. 
+    }, [fileId]);
     // If 'editor' changes (re-created), we might re-init provider? 
     // We should separate provider init from editor content loading.
 

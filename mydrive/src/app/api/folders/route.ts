@@ -106,8 +106,8 @@ export async function GET(req: Request) {
     }
   }
 
-  let whereClauseFolders: any = { parentId };
-  let whereClauseFiles: any = { folderId: parentId };
+  let whereClauseFolders: any = { parentId, inTrash: false };
+  let whereClauseFiles: any = { folderId: parentId, inTrash: false };
 
   if (parentId === null) {
     // Root: Strict ownership (My Drive)
