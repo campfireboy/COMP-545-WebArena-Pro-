@@ -48,6 +48,10 @@ export function MediaPreviewModal({ file, onClose }: { file: FileObject; onClose
                 <audio controls autoPlay src={src} style={{ width: 300 }} />
             </div>
         );
+    } else if (file.mimeType === "application/pdf") {
+        content = (
+            <iframe src={src} style={{ width: "90vw", height: "85vh", background: "white", border: "none", borderRadius: 8 }} />
+        );
     } else {
         content = <div style={{ color: "white" }}>Unsupported preview format</div>;
     }

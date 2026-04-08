@@ -84,6 +84,8 @@ type Share = {
   permission: string;
 };
 
+type OriginalLocation = { kind: "folder" | "file"; id: string; originalParentId: string | null };
+
 
 
 export default function DriveView({ folderId, viewType = "drive" }: { folderId: string | null, viewType?: "drive" | "trash" }) {
@@ -109,6 +111,18 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
   // Add Button Menu
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [codeMenuOpen, setCodeMenuOpen] = useState(false);
+
+  const [toast, setToast] = useState<{ message: string, onUndo: () => void, id: number } | null>(null);
+
+  function showToast(message: string, onUndo: () => void) {
+    setToast({ message, onUndo, id: Date.now() });
+  }
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(timer);
+  }, [toast?.id]);
 
   function createFile(defaultName: string, content: string, mimeType: string) {
     setAddMenuOpen(false);
@@ -297,10 +311,17 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
 
   async function performMove(targetId: string | null) {
     if (!movePicker) return;
+
+    const originalLocations: OriginalLocation[] = [];
+
     for (const key of movePicker.ids) {
       const [kind, id] = key.split(":");
-      // Skip if moving folder into itself (simple check)
       if (kind === "folder" && id === targetId) continue;
+
+      const item = kind === "folder" ? folders.find(f => f.id === id) : files.find(f => f.id === id);
+      if (item) {
+        originalLocations.push({ kind: kind as "folder" | "file", id, originalParentId: kind === "file" ? (item as FileObject).folderId : (item as Folder).parentId });
+      }
 
       const endpoint = kind === "file" ? `/api/files/${id}` : `/api/folders/${id}`;
       const payload = kind === "file" ? { folderId: targetId } : { parentId: targetId };
@@ -312,7 +333,25 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
       });
     }
     setMovePicker(null);
-    setSelectedIds(new Set()); // Clear selection after move
+    setSelectedIds(new Set());
+
+    if (originalLocations.length > 0) {
+      const targetName = targetId ? (folders.find(f => f.id === targetId)?.name || "folder") : "My Drive";
+      showToast(`Moved ${originalLocations.length} items to ${targetName}`, async () => {
+        for (const loc of originalLocations) {
+          const endpoint = loc.kind === "file" ? `/api/files/${loc.id}` : `/api/folders/${loc.id}`;
+          const payload = loc.kind === "file" ? { folderId: loc.originalParentId } : { parentId: loc.originalParentId };
+          await fetch(endpoint, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        }
+        await load();
+        setToast(null);
+      });
+    }
+
     await load();
   }
 
@@ -538,22 +577,49 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
     const id = itemId || menu?.id;
 
     const isPermanent = viewType === "trash" ? "?permanent=true" : "";
-    let res;
-    if (selectedIds.size > 0 && !itemId) {
-      const promises = Array.from(selectedIds).map(async (key) => {
+
+    let originalLocations: OriginalLocation[] = [];
+    const keysToDelete = (selectedIds.size > 0 && !itemId) ? Array.from(selectedIds) : [`${kind}:${id}`];
+
+    if (viewType !== "trash") {
+      for (const key of keysToDelete) {
+        const [k, i] = key.split(":");
+        const item = k === "folder" ? folders.find(f => f.id === i) : files.find(f => f.id === i);
+        if (item) {
+          originalLocations.push({ kind: k as "folder" | "file", id: i, originalParentId: k === "folder" ? (item as Folder).parentId : (item as FileObject).folderId });
+        }
+      }
+    }
+
+    if (keysToDelete.length > 0) {
+      const promises = keysToDelete.map(async (key) => {
         const [k, i] = key.split(":");
         const url = k === "folder" ? `/api/folders/${i}${isPermanent}` : `/api/files/${i}${isPermanent}`;
         return fetch(url, { method: "DELETE" });
       });
       await Promise.all(promises);
-    } else if (kind && id) {
-      const url = kind === "folder" ? `/api/folders/${id}${isPermanent}` : `/api/files/${id}${isPermanent}`;
-      res = await fetch(url, { method: "DELETE" });
-      if (!res.ok) alert(`Failed to delete ${kind}`);
     }
+
     setMenu(null);
     setSelectedIds(new Set());
     setSelectionMode(false);
+
+    if (viewType !== "trash" && originalLocations.length > 0) {
+      showToast(`Moved ${originalLocations.length} items to Trash`, async () => {
+        for (const loc of originalLocations) {
+          const endpoint = loc.kind === "file" ? `/api/files/${loc.id}` : `/api/folders/${loc.id}`;
+          const payload = loc.kind === "file" ? { inTrash: false, folderId: loc.originalParentId } : { inTrash: false, parentId: loc.originalParentId };
+          await fetch(endpoint, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        }
+        await load();
+        setToast(null);
+      });
+    }
+
     await load();
   }
 
@@ -657,12 +723,70 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
     }
   }
 
-  // --- MOVE LOGIC ---
+  async function handleDropFromEvent(e: React.DragEvent, targetId: string | null, targetIsTrash: boolean = false) {
+    e.preventDefault();
+    try {
+      const payloadStr = e.dataTransfer.getData("application/json");
+      if (!payloadStr) return;
+      const draggedKeys: string[] = JSON.parse(payloadStr);
+      if (!Array.isArray(draggedKeys) || draggedKeys.length === 0) return;
 
+      if (targetIsTrash) {
+        if (viewType === "trash") return; // already in trash
+        let originalLocations: OriginalLocation[] = [];
+        for (const key of draggedKeys) {
+          const [k, i] = key.split(":");
+          const item = k === "folder" ? folders.find(f => f.id === i) : files.find(f => f.id === i);
+          if (item) originalLocations.push({ kind: k as "folder" | "file", id: i, originalParentId: k === "folder" ? (item as Folder).parentId : (item as FileObject).folderId });
+        }
 
+        await Promise.all(draggedKeys.map(key => {
+          const [k, i] = key.split(":");
+          return fetch(k === "folder" ? `/api/folders/${i}` : `/api/files/${i}`, { method: "DELETE" });
+        }));
 
+        setSelectedIds(new Set());
+        showToast(`Moved ${draggedKeys.length} items to Trash`, async () => {
+          for (const loc of originalLocations) {
+            const endpoint = loc.kind === "file" ? `/api/files/${loc.id}` : `/api/folders/${loc.id}`;
+            const payload = loc.kind === "file" ? { inTrash: false, folderId: loc.originalParentId } : { inTrash: false, parentId: loc.originalParentId };
+            await fetch(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          }
+          await load();
+          setToast(null);
+        });
+        await load();
+        return;
+      }
 
-  // --- SHARING LOGIC ---
+      let originalLocations: OriginalLocation[] = [];
+      for (const key of draggedKeys) {
+        const [k, i] = key.split(":");
+        if (k === "folder" && i === targetId) continue;
+        const item = k === "folder" ? folders.find(f => f.id === i) : files.find(f => f.id === i);
+        if (item) originalLocations.push({ kind: k as "folder" | "file", id: i, originalParentId: k === "folder" ? (item as Folder).parentId : (item as FileObject).folderId });
+      }
+
+      await Promise.all(originalLocations.map(loc => {
+        const endpoint = loc.kind === "file" ? `/api/files/${loc.id}` : `/api/folders/${loc.id}`;
+        const payload = loc.kind === "file" ? { folderId: targetId, inTrash: false } : { parentId: targetId, inTrash: false };
+        return fetch(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      }));
+
+      setSelectedIds(new Set());
+      const targetName = targetId ? (folders.find(f => f.id === targetId)?.name || "folder") : "My Drive";
+      showToast(`Moved ${originalLocations.length} items to ${targetName}`, async () => {
+        for (const loc of originalLocations) {
+          const endpoint = loc.kind === "file" ? `/api/files/${loc.id}` : `/api/folders/${loc.id}`;
+          const payload = loc.kind === "file" ? { folderId: loc.originalParentId } : { parentId: loc.originalParentId };
+          await fetch(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        }
+        await load();
+        setToast(null);
+      });
+      await load();
+    } catch (err) { console.error(err); }
+  }
 
 
 
@@ -694,15 +818,122 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
 
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <Header />
-      <div style={{ display: "flex", flex: 1, position: "relative" }}>
+      <div style={{ display: "flex", flex: 1, position: "relative", overflow: "hidden" }}>
         {/* Sidebar */}
-        <Sidebar activePage={viewType === "trash" ? "trash" : "drive"} />
+        <Sidebar
+          activePage={viewType === "trash" ? "trash" : "drive"}
+          onDropToDrive={(e) => handleDropFromEvent(e, null, false)}
+          onDropToTrash={(e) => handleDropFromEvent(e, null, true)}
+        >
+          {/* PLUS BUTTON (Hidden in Trash) */}
+          {viewType !== "trash" && (
+            <div style={{ marginTop: "auto", alignSelf: "flex-end", marginRight: 16, marginBottom: 48, position: "relative", zIndex: 5000 }}>
+              <button
+                ref={addBtnRef}
+                aria-label="New"
+                title="New"
+                onClick={() => setAddMenuOpen(!addMenuOpen)}
+                style={{
+                  width: 56, height: 56, borderRadius: 16,
+                  background: "#c2e7ff", color: "#001d35",
+                  border: "none",
+                  boxShadow: "0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)",
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "box-shadow 0.08s linear, min-width 0.15s cubic-bezier(0.4,0.0,0.2,1)"
+                }}
+              >
+                <Plus size={24} strokeWidth={2.5} />
+              </button>
+
+              {addMenuOpen && (
+                <div
+                  ref={addMenuRef}
+                  style={{
+                    position: "absolute", bottom: 70, left: 0,
+                    background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+                    width: 200, overflow: "hidden", border: "1px solid #ddd"
+                  }}
+                >
+                  {!codeMenuOpen ? (
+                    <>
+                      <button
+                        data-testid="new-folder-button"
+                        onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        New Folder
+                      </button>
+                      <button
+                        onClick={() => createFile("Untitled Document.doc", JSON.stringify({ type: "doc", content: [] }), "application/vnd.google-apps.document")}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        New Document
+                      </button>
+                      <button
+                        onClick={() => createFile("Untitled Spreadsheet.csv", "", "text/csv")}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        New Spreadsheet
+                      </button>
+                      <button
+                        onClick={() => setCodeMenuOpen(true)}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                      >
+                        <span>Code File</span>
+                        <span style={{ fontSize: 10 }}>▶</span>
+                      </button>
+                      <button
+                        onClick={() => { setAddMenuOpen(false); folderInputRef.current?.click(); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        Folder Upload
+                      </button>
+                      <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
+                      <button
+                        onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
+                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
+                      >
+                        File Upload
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setCodeMenuOpen(false)}
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", background: "#f8f9fa", border: "none", cursor: "pointer", fontWeight: 600, borderBottom: "1px solid #eee", color: "#555" }}
+                      >
+                        ◀ Back
+                      </button>
+                      {[
+                        { name: "Python", ext: "py", mime: "text/x-python" },
+                        { name: "Java", ext: "java", mime: "text/x-java-source" },
+                        { name: "JavaScript", ext: "js", mime: "application/javascript" },
+                        { name: "HTML", ext: "html", mime: "text/html" },
+                        { name: "CSS", ext: "css", mime: "text/css" },
+                        { name: "C++", ext: "cpp", mime: "text/x-c++src" },
+                        { name: "Text", ext: "txt", mime: "text/plain" },
+                      ].map(lang => (
+                        <button
+                          key={lang.ext}
+                          onClick={() => createFile(`Untitled.${lang.ext}`, "", lang.mime)}
+                          style={{ width: "100%", textAlign: "left", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 14 }}
+                        >
+                          {lang.name}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </Sidebar>
 
         {/* Main */}
         <main
-          style={{ flex: 1, padding: 16, position: "relative" }}
+          style={{ flex: 1, padding: 16, overflowY: "auto", position: "relative" }}
           onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }}
         >
           {loading ? <div>Loading...</div> : (
@@ -907,11 +1138,26 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
                     const isSelected = selectedIds.has(`folder:${f.id}`);
                     return (
                       <div key={`folder-${f.id}`}
+                        draggable={true}
+                        onDragStart={(e) => {
+                          const key = `folder:${f.id}`;
+                          let payload = Array.from(selectedIds);
+                          if (!selectedIds.has(key)) payload = [key];
+                          e.dataTransfer.setData("application/json", JSON.stringify(payload));
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                        onDrop={(e) => {
+                          const key = `folder:${f.id}`;
+                          if (selectedIds.has(key)) return;
+                          handleDropFromEvent(e, f.id, false);
+                        }}
                         onContextMenu={(e) => handleContextMenu(e, "folder", f.id)}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (!selectionMode) {
+                          if (!selectionMode && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
                             setSelectedIds(new Set([`folder:${f.id}`]));
+                            setLastSelectedId(`folder:${f.id}`);
                           } else {
                             handleSelectionClick(e, { kind: "folder", id: f.id }, index, sortedItems);
                           }
@@ -1060,17 +1306,26 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
                     const isSelected = selectedIds.has(`file:${file.id}`);
                     return (
                       <div key={`file-${file.id}`}
+                        draggable={true}
+                        onDragStart={(e) => {
+                          const key = `file:${file.id}`;
+                          let payload = Array.from(selectedIds);
+                          if (!selectedIds.has(key)) payload = [key];
+                          e.dataTransfer.setData("application/json", JSON.stringify(payload));
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
                         onContextMenu={(e) => handleContextMenu(e, "file", file.id)}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (!selectionMode) {
+                          if (!selectionMode && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
                             setSelectedIds(new Set([`file:${file.id}`]));
+                            setLastSelectedId(`file:${file.id}`);
                           } else {
                             handleSelectionClick(e, { kind: "file", id: file.id }, index, sortedItems);
                           }
                         }}
                         onDoubleClick={() => {
-                          if (["image/jpeg", "image/png", "image/gif", "video/mp4", "audio/mpeg", "image/webp"].includes(file.mimeType)) {
+                          if (["image/jpeg", "image/png", "image/gif", "video/mp4", "audio/mpeg", "image/webp", "application/pdf"].includes(file.mimeType)) {
                             setPreviewFile(file);
                           } else {
                             router.push(`/drive/file/${file.id}`);
@@ -1228,108 +1483,7 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
 
 
 
-          {/* PLUS BUTTON (Hidden in Trash) */}
-          {viewType !== "trash" && (
-            <div style={{ position: "absolute", bottom: 40, left: 40, zIndex: 1000 }}>
-              <button
-                ref={addBtnRef}
-                aria-label="New"
-                title="New"
-                onClick={() => setAddMenuOpen(!addMenuOpen)}
-                style={{
-                  width: 56, height: 56, borderRadius: 16,
-                  background: "#c2e7ff", color: "#001d35",
-                  border: "none",
-                  boxShadow: "0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)",
-                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "box-shadow 0.08s linear, min-width 0.15s cubic-bezier(0.4,0.0,0.2,1)"
-                }}
-              >
-                <Plus size={24} strokeWidth={2.5} />
-              </button>
 
-              {addMenuOpen && (
-                <div
-                  ref={addMenuRef}
-                  style={{
-                    position: "absolute", bottom: 70, left: 0,
-                    background: "white", borderRadius: 8, boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-                    width: 200, overflow: "hidden", border: "1px solid #ddd"
-                  }}
-                >
-                  {!codeMenuOpen ? (
-                    <>
-                      <button
-                        data-testid="new-folder-button"
-                        onClick={() => { setAddMenuOpen(false); setCreateFolderModalOpen(true); }}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                      >
-                        New Folder
-                      </button>
-                      <button
-                        onClick={() => createFile("Untitled Document.doc", JSON.stringify({ type: "doc", content: [] }), "application/vnd.google-apps.document")}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                      >
-                        New Document
-                      </button>
-                      <button
-                        onClick={() => createFile("Untitled Spreadsheet.csv", "", "text/csv")}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                      >
-                        New Spreadsheet
-                      </button>
-                      <button
-                        onClick={() => setCodeMenuOpen(true)}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                      >
-                        <span>Code File</span>
-                        <span style={{ fontSize: 10 }}>▶</span>
-                      </button>
-                      <button
-                        onClick={() => { setAddMenuOpen(false); folderInputRef.current?.click(); }}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                      >
-                        Folder Upload
-                      </button>
-                      <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
-                      <button
-                        onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click(); }}
-                        style={{ width: "100%", textAlign: "left", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontWeight: 500 }}
-                      >
-                        File Upload
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => setCodeMenuOpen(false)}
-                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", background: "#f8f9fa", border: "none", cursor: "pointer", fontWeight: 600, borderBottom: "1px solid #eee", color: "#555" }}
-                      >
-                        ◀ Back
-                      </button>
-                      {[
-                        { name: "Python", ext: "py", mime: "text/x-python" },
-                        { name: "Java", ext: "java", mime: "text/x-java-source" },
-                        { name: "JavaScript", ext: "js", mime: "application/javascript" },
-                        { name: "HTML", ext: "html", mime: "text/html" },
-                        { name: "CSS", ext: "css", mime: "text/css" },
-                        { name: "C++", ext: "cpp", mime: "text/x-c++src" },
-                        { name: "Text", ext: "txt", mime: "text/plain" },
-                      ].map(lang => (
-                        <button
-                          key={lang.ext}
-                          onClick={() => createFile(`Untitled.${lang.ext}`, "", lang.mime)}
-                          style={{ width: "100%", textAlign: "left", padding: "10px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 14 }}
-                        >
-                          {lang.name}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Hidden File Input */}
           <input
@@ -1638,6 +1792,15 @@ export default function DriveView({ folderId, viewType = "drive" }: { folderId: 
           </div>
         </div>
       )}
+
+      {toast && (
+        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#333", color: "white", padding: "12px 24px", borderRadius: 8, display: "flex", alignItems: "center", gap: 16, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+          <span>{toast.message}</span>
+          <button onClick={toast.onUndo} style={{ background: "transparent", color: "#8ab4f8", border: "none", cursor: "pointer", fontWeight: 600 }}>Undo</button>
+          <button onClick={() => setToast(null)} style={{ background: "transparent", color: "#ccc", border: "none", cursor: "pointer", display: "flex", alignItems: "center" }}><X size={16} /></button>
+        </div>
+      )}
+
     </div >
   );
 }

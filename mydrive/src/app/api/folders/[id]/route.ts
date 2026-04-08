@@ -74,7 +74,19 @@ export async function PATCH(
   const inTrashRaw = body?.inTrash;
 
   const dataToUpdate: any = {};
-  if (inTrashRaw !== undefined) {
+  if (inTrashRaw === false) {
+    const ids = await collectDescendantFolderIds(id);
+    await prisma.$transaction(async (tx) => {
+      await tx.fileObject.updateMany({
+        where: { folderId: { in: ids } },
+        data: { inTrash: false }
+      });
+      await tx.folder.updateMany({
+        where: { id: { in: ids } },
+        data: { inTrash: false }
+      });
+    });
+  } else if (inTrashRaw !== undefined) {
     dataToUpdate.inTrash = inTrashRaw;
   }
 

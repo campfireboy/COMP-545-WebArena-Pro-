@@ -1,7 +1,7 @@
 import { useRouter } from "next/navigation";
 import { HardDrive, Users, Trash2 } from "lucide-react";
 
-export function Sidebar({ activePage }: { activePage: "drive" | "shared" | "trash" }) {
+export function Sidebar({ activePage, onDropToDrive, onDropToTrash, children }: { activePage: "drive" | "shared" | "trash", onDropToDrive?: (e: React.DragEvent) => void, onDropToTrash?: (e: React.DragEvent) => void, children?: React.ReactNode }) {
     const router = useRouter();
 
     const baseStyle = {
@@ -36,6 +36,8 @@ export function Sidebar({ activePage }: { activePage: "drive" | "shared" | "tras
                 <button
                     onClick={() => router.push("/drive")}
                     style={activePage === "drive" ? activeStyle : baseStyle}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                    onDrop={onDropToDrive}
                 >
                     <HardDrive size={20} />
                     My Drive
@@ -50,11 +52,14 @@ export function Sidebar({ activePage }: { activePage: "drive" | "shared" | "tras
                 <button
                     onClick={() => router.push("/drive/trash")}
                     style={activePage === "trash" ? activeStyle : baseStyle}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                    onDrop={onDropToTrash}
                 >
                     <Trash2 size={20} />
                     Trash
                 </button>
             </nav>
+            {children}
         </aside>
     );
 }
